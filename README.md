@@ -48,7 +48,7 @@ No Brasil a fonte é sempre a totalização oficial, já que baixar os cerca de 
 ## Arquitetura
 
 ```
-TSE ──► server/sync.js (job) ──► dados/*.json ──► server/server.js ──► Cloudflare ──► navegadores
+TSE ──► server/sync.js (job) ──► dados/*.json ──► server/server.js ──► Nginx Proxy Manager ──► Cloudflare ──► navegadores
 ```
 
 - O **job de sincronização** é o único cliente que fala com o TSE. A cada ciclo (5 min por padrão) baixa o total do país, as 27 UFs, o exterior e os BUs novos. Os municípios rodam num loop separado e incremental: o arquivo agregado de cada UF diz quais municípios mudaram, e só esses são baixados.
@@ -62,7 +62,8 @@ O container não publica porta no host: ele entra na rede Docker do Nginx Proxy 
 
 ```bash
 docker network ls                                  # descubra o nome da rede do NPM (ex.: npm_default)
-NPM_REDE=npm_default docker compose up -d --build
+cp .env.example .env                               # e ponha esse nome em NPM_REDE
+docker compose up -d --build
 docker compose logs -f painel                      # acompanha a sincronização
 docker exec apuracao-eleicoes wget -qO- http://127.0.0.1:8080/saude   # horário do último snapshot
 ```

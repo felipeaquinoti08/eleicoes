@@ -24,4 +24,4 @@ volumes:
 networks:
   npm:
     external: true
-    name: ${NPM_REDE:-npm_default}   # rede do Nginx Proxy Manager (veja com: docker network ls)
+    name: ${NPM_REDE:?defina NPM_REDE no arquivo .env}   # rede do Nginx Proxy Manager

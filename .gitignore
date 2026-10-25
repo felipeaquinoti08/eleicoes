@@ -3,3 +3,4 @@ dados/
 node_modules/
 *.log
 runtime/
+.env
