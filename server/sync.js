@@ -119,36 +119,50 @@ function publicar(n) {
 }
 
 const fotosEmAndamento = {};
+// Brasil: roda a cada SYNC_BRASIL_S (30 s). Primeiro baixa só o total do país, que diz quando o TSE gerou o
+// último dado; as 27 UFs só são baixadas quando esse horário muda (ou a cada 10 min, por garantia).
+const ultimaCompleta = {};
 async function sincronizarNacional(n) {
   const T = TURNOS[n], e = estadoDo(n);
   const inicio = Date.now();
-  // cada arquivo falha sozinho: com 429 no total do exterior, as UFs ainda são buscadas
+  let brJ = null;
+  try { brJ = await getJSON(`${BASE}/${T.ele}/dados/br/br-c0001-e${pad(T.ele, 6)}-u.json`); } catch (er) { log("aviso brasil:", er.message); }
+  const horaTSE = brJ ? `${brJ.dg} ${brJ.hg}` : null;
+  const temTudo = e.candidatos.length && UFS.every(uf => e.ufs[uf]);
+  if (brJ && temTudo && e.brasil?.hora === horaTSE && Date.now() - (ultimaCompleta[n] || 0) < 10 * 60 * 1000) {
+    return { ...resumoNacional(e), semNovidade: true }; // o TSE não publicou nada desde a última passada
+  }
+  if (brJ) {
+    e.brasil = oficialDe(brJ);
+    if (!e.candidatos.length) e.candidatos = candidatosDe(brJ).sort((a, b) => a.n - b.n);
+  }
+  // total oficial do exterior (o TSE às vezes deixa esse arquivo parado; o painel deriva do total do país)
   try {
     const zzJ = await getJSON(`${BASE}/${T.ele}/dados/zz/zz-c0001-e${pad(T.ele, 6)}-u.json`);
     e.candidatos = candidatosDe(zzJ).sort((a, b) => a.n - b.n);
     e.ofExterior = oficialDe(zzJ);
-  } catch (er) {
-    log('aviso exterior oficial:', er.message);
-    if (!e.candidatos.length) { // sem candidatos ainda: tenta tirá-los do total do país
-      const brJ = await getJSON(`${BASE}/${T.ele}/dados/br/br-c0001-e${pad(T.ele, 6)}-u.json`);
-      e.candidatos = candidatosDe(brJ).sort((a, b) => a.n - b.n);
-    }
-  }
+  } catch (er) { log("aviso exterior oficial:", er.message); }
+  if (!e.candidatos.length) throw new Error("sem lista de candidatos");
   if (!fotosEmAndamento[n]) { // em paralelo: as fotos não seguram o resultado
     fotosEmAndamento[n] = baixarFotos(n, T, e.candidatos).finally(() => { fotosEmAndamento[n] = null; });
   }
-  try { e.brasil = oficialDe(await getJSON(`${BASE}/${T.ele}/dados/br/br-c0001-e${pad(T.ele, 6)}-u.json`)); } catch (er) { log("aviso brasil:", er.message); }
-  // totalização oficial por UF (o Brasil todo cabe em 27 arquivos); se uma falhar, fica o valor anterior
-  let falhas = 0;
-  falhas = await emParalelo(UFS, CONCORRENCIA, async uf => {
+  // totalização oficial por UF; se uma falhar, fica o valor anterior
+  const falhas = await emParalelo(UFS, CONCORRENCIA, async uf => {
     const u = uf.toLowerCase();
     e.ufs[uf] = oficialDe(await getJSON(`${BASE}/${T.ele}/dados/${u}/${u}-c0001-e${pad(T.ele, 6)}-u.json`));
   });
+  ultimaCompleta[n] = Date.now();
   publicar(n);
-  const sec = Object.values(e.ufs).reduce((a, u) => a + u.secRec, 0);
-  log(`turno ${n}: Brasil ${sec} seções nas UFs${falhas ? `, ${falhas} UFs com falha` : ""} em ${((Date.now() - inicio) / 1000).toFixed(1)}s`);
-  const secTot = Object.values(e.ufs).reduce((a, u) => a + u.secTot, 0);
-  return { secoesApuradas: sec, secoesTotal: secTot, ufsComFalha: falhas, tseGeradoEm: e.brasil?.hora || null };
+  const r = resumoNacional(e);
+  log(`turno ${n}: Brasil ${r.secoesApuradas} seções nas UFs (TSE ${horaTSE || "?"})${falhas ? `, ${falhas} UFs com falha` : ""} em ${((Date.now() - inicio) / 1000).toFixed(1)}s`);
+  return { ...r, ufsComFalha: falhas, semNovidade: false };
+}
+function resumoNacional(e) {
+  return {
+    secoesApuradas: Object.values(e.ufs).reduce((a, u) => a + u.secRec, 0),
+    secoesTotal: Object.values(e.ufs).reduce((a, u) => a + u.secTot, 0),
+    tseGeradoEm: e.brasil?.hora || null,
+  };
 }
 
 async function sincronizarExterior(n) {
@@ -331,10 +345,16 @@ function iniciar() {
   fs.mkdirSync(DIR_DADOS, { recursive: true });
   const min = +process.env.SYNC_INTERVALO_MIN || 5;
   const turnos = (process.env.TURNOS || '2,1').split(',').map(s => s.trim()).filter(t => TURNOS[t]);
-  for (const t of turnos) { const m = t === '1' ? Math.max(min, 60) : min; estadoDo(t); agendar(t, m, sincronizarNacional, 'brasil'); agendar(t, m, sincronizarExterior, 'exterior'); }; // 1º turno já está encerrado
+  const brasilMin = (+process.env.SYNC_BRASIL_S || 30) / 60;
+  for (const t of turnos) {
+    const m = t === '1' ? Math.max(min, 60) : min; // 1º turno já está encerrado
+    estadoDo(t);
+    agendar(t, t === '1' ? m : brasilMin, sincronizarNacional, 'brasil');
+    agendar(t, m, sincronizarExterior, 'exterior');
+  } // 1º turno já está encerrado
   // municípios: o 1º turno já acabou, então depois da primeira carga só confere a cada 60 min
   for (const t of (process.env.TURNOS_MUN || '2,1').split(',').map(s => s.trim()).filter(t => TURNOS[t])) loopMunicipios(t, t === '1' ? 60 : 1);
-  log(`sincronização ativa: turnos ${turnos.join(', ')} a cada ${min} min (1º turno a cada ${Math.max(min, 60)} min)`);
+  log(`sincronização ativa: turnos ${turnos.join(', ')}; Brasil a cada ${brasilMin * 60} s, exterior a cada ${min} min (1º turno a cada ${Math.max(min, 60)} min)`);
 }
 
 const sincronizarTurno = async n => { await sincronizarNacional(n); await sincronizarExterior(n); };

@@ -8,7 +8,7 @@ ENV NODE_ENV=production \
     DIR_DADOS=/app/dados \
     SYNC_INTERVALO_MIN=5 \
     TURNOS=2,1 \
-    CACHE_DADOS_S=30
+    CACHE_DADOS_S=15
 
 WORKDIR /app
 COPY public ./public

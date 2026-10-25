@@ -6,10 +6,11 @@ services:
     container_name: apuracao-eleicoes
     restart: unless-stopped
     environment:
-      SYNC_INTERVALO_MIN: "5"   # de quantos em quantos minutos baixar do TSE
+      SYNC_BRASIL_S: "30"       # de quantos em quantos segundos conferir se o TSE publicou dados novos do Brasil
+      SYNC_INTERVALO_MIN: "5"   # de quantos em quantos minutos baixar os boletins do exterior
       TURNOS: "2,1"             # turnos sincronizados (o 1º turno só a cada 60 min)
       TURNOS_MUN: "2,1"         # turnos com resultado por município
-      CACHE_DADOS_S: "30"       # cache dos snapshots no Cloudflare/navegador (segundos)
+      CACHE_DADOS_S: "15"       # cache dos snapshots no Cloudflare/navegador (segundos)
       CONCORRENCIA: "4"         # downloads simultâneos ao TSE (menos = menos risco de bloqueio 429)
     volumes:
       # Padrão: volume nomeado "<projeto>_dados" (com -p eleicoes, "eleicoes_dados"), que sobrevive a rebuild e redeploy.

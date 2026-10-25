@@ -40,10 +40,12 @@ const espera = ms => new Promise(r => setTimeout(r, ms));
 // ---------------------------------------------------------------- configuração
 const PADRAO = {
   turno: '2', fonte: 'auto', destaque: 'vencedor', ordem: 'comp', soComVotos: true, cidades: true,
-  rotulos: true, brasil: true, projecao: true, modo: 'completo', tour: false, tourSeg: '8', intervalo: '60', som: true,
+  rotulos: true, brasil: true, projecao: true, modo: 'completo', tour: false, tourSeg: '8', intervalo: '30', som: true,
 };
 const cfg = Object.assign({}, PADRAO, JSON.parse(localStorage.getItem('cfg-apuracao') || '{}'));
 const salvarCfg = () => localStorage.setItem('cfg-apuracao', JSON.stringify(cfg));
+// o padrão antigo era 1 min; quem ficou com ele salvo passa para 30 s (o servidor agora confere o TSE a cada 30 s)
+if (cfg.intervalo === '60' && !cfg.intervalo30) { cfg.intervalo = '30'; cfg.intervalo30 = true; salvarCfg(); }
 
 // Modos de exibição: "completo" (navegador, celular e TV, padrão) e "live" (vertical 9:16 com tour, para transmissão).
 // O endereço pode fixar o modo, útil para TV e OBS: ?modo=live, ?modo=completo ou ?modo=tv (completo, em tela cheia, com tour).

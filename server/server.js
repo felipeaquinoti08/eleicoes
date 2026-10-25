@@ -12,7 +12,7 @@ const historico = require('./historico');
 const PORTA = +process.env.PORTA || 8080;
 const DIR_PUBLIC = path.join(__dirname, '..', 'public');
 const DIR_DADOS = process.env.DIR_DADOS || path.join(__dirname, '..', 'dados');
-const CACHE_DADOS_S = +process.env.CACHE_DADOS_S || 30;
+const CACHE_DADOS_S = +process.env.CACHE_DADOS_S || 15;
 
 // A pasta de dados pode ser uma pasta do servidor montada no container (./dados), criada pelo Docker como root.
 // Se o processo começa como root, acerta o dono da pasta e passa a rodar como o usuário "node" (uid 1000).
