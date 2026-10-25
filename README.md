@@ -8,7 +8,11 @@ Painel ao vivo da apuração das Eleições 2026 com dados públicos do TSE: Bra
 - **Navegação**: `Total › Brasil › Região › Estado › Município` e `Total › Exterior › Continente › País › Cidade › Seção`.
 - **Filtros**: turno, fonte dos dados do exterior, "ir para" (região, estado, continente, país), busca de município ou cidade, cor do mapa (quem lidera ou % de um candidato), ordenação do ranking, só locais com votos.
 - **Projeção do resultado final** (2º turno, experimental): veja abaixo.
-- **Sinal sonoro**: bipe no estilo da urna e um aviso "NOVOS DADOS" sempre que a apuração avança. O navegador só libera som depois de um clique na página, então o botão 🔊 pisca até isso acontecer.
+- **Aviso de novos dados**: a cada avanço da apuração, toca um bipe no estilo da urna e aparece um aviso dizendo onde entraram votos (estados e países do exterior), quantos e o placar em cada lugar. O navegador só libera som depois de um clique na página, então o botão 🔊 pisca até isso acontecer.
+
+## Pessoas online
+
+Cada navegador com o painel aberto manda um sinal anônimo para `/presenca` a cada 30 s (um id aleatório guardado no próprio navegador, sem dados pessoais). O servidor conta quem deu sinal nos últimos 90 s e mostra o número no cabeçalho (👥 N online) e no `/saude`, com o pico do dia. Várias abas do mesmo navegador contam como uma pessoa. `/presenca` responde com `no-store` e não entra na regra de cache do Cloudflare (que só pega `/dados/`). A contagem fica na memória e recomeça do zero quando o container reinicia.
 
 ## Modos de exibição
 
@@ -118,7 +122,7 @@ docker run --rm -v eleicoes_dados:/de -v "$(pwd)/dados":/para alpine cp -a /de/.
 
 ### Como saber se a coleta está funcionando
 
-**1. Endpoint `/saude`**: abra `https://SEU-DOMINIO/saude` (nunca fica em cache). Para cada turno há três coletas: `brasil` (total e UFs), `exterior` (boletins de urna) e `municipios`. Em cada uma:
+**1. Página `/saude`**: abra `https://SEU-DOMINIO/saude` no navegador (nunca fica em cache). Ela mostra um semáforo geral, pessoas online agora e o pico do dia, se o TSE está limitando (429) e o estado de cada coleta, e se atualiza a cada 10 s. Scripts e o healthcheck recebem o mesmo conteúdo em JSON (ou use `/saude.json`). Para cada turno há as coletas `brasil` (total e UFs), `exterior` (boletins de urna), `municipios` e `projecao`. Em cada uma:
 
 | Campo | O que indica |
 |---|---|
