@@ -4,6 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const BU = require('../public/bu.js');
+const projecao = require('./projecao');
 
 const BASE = 'https://resultados.tse.jus.br/oficial/ele2026';
 const TURNOS = {
@@ -232,6 +233,33 @@ async function sincronizarMunicipios(n) {
   return { municipiosComDados: comDados, atualizadosNestaPassada: baixados, falhas: erros };
 }
 
+// ---------------------------------------------------------------- projeção do 2º turno
+let MUNICIPIOS = null;
+function municipios() {
+  if (!MUNICIPIOS) {
+    const src = fs.readFileSync(path.join(__dirname, "..", "public", "municipios.js"), "utf8");
+    MUNICIPIOS = JSON.parse(src.slice(src.indexOf("{"), src.lastIndexOf("}") + 1));
+  }
+  return MUNICIPIOS;
+}
+function atualizarProjecao() {
+  try {
+    const e1 = estadoDo("1"), e2 = estadoDo("2");
+    const mun1 = estadoMunDo("1");
+    if (!e2.candidatos.length || !e1.candidatos.length || !Object.keys(mun1).length) return; // falta a base do 1º turno
+    const r = projecao.calcular({
+      cands: e2.candidatos.map(c => c.n), cands1: e1.candidatos.map(c => c.n),
+      mun1, mun2: estadoMunDo("2"), municipios: municipios(),
+      bu1: cacheDo(TURNOS[1].pleito), bu2: cacheDo(TURNOS[2].pleito),
+    });
+    gravarJSON(path.join(DIR_DADOS, "projecao-2.json"), r);
+    marcar("2", "projecao", { ok: true, ultimoSucesso: r.gerado, disponivel: r.disponivel, pesoApurado: r.pesoApurado, erro: null });
+  } catch (er) {
+    marcar("2", "projecao", { ok: false, erro: er.message });
+    log("erro projeção:", er.message);
+  }
+}
+
 // passadas contínuas, com uma pausa entre elas
 async function loopMunicipios(n, pausaMin) {
   for (;;) {
@@ -239,6 +267,7 @@ async function loopMunicipios(n, pausaMin) {
     marcar(n, "municipios", { rodando: true });
     try {
       const r = await sincronizarMunicipios(n);
+      if (n === '2') atualizarProjecao();
       marcar(n, "municipios", { ok: true, ultimoSucesso: new Date().toISOString(), duracaoS: +((Date.now() - inicio) / 1000).toFixed(1), erro: null, ...r });
     } catch (e) {
       marcar(n, "municipios", { ok: false, ultimaFalha: new Date().toISOString(), erro: e.message });
@@ -264,6 +293,7 @@ function agendar(n, minutos, fn, nome) {
     marcar(n, nome, { rodando: true, intervaloMin: minutos });
     try {
       const r = await fn(n);
+      if (String(n) === '2' && fn === sincronizarExterior) atualizarProjecao();
       marcar(n, nome, { ok: true, ultimoSucesso: new Date().toISOString(), duracaoS: +((Date.now() - inicio) / 1000).toFixed(1), erro: null, ...r });
     }
     catch (e) {

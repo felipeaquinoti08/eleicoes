@@ -49,3 +49,14 @@
 .badge.eleito { background: #16a34a; color: #fff; }
 .badge.turno2 { background: #f59e0b; color: #111; }
 .vazio-hist { color: var(--suave); text-align: center; padding: 30px; }
+
+@media (max-width: 900px) {
+  html, body { overflow: auto; }
+  #hist { height: auto; grid-template-columns: 1fr; grid-template-areas: "topo" "lista" "detalhe"; }
+  #listaEleicoes { max-height: 40vh; }
+  #corpoHist { grid-template-columns: 1fr; grid-template-rows: 55vh auto; }
+  #filtrosHist select { min-width: 0; width: 100%; }
+}
+@media (min-width: 2200px) {
+  #hist #topo, #listaEleicoes, #cabecalhoEleicao, #cargos, #filtrosHist, #resultadoHist { zoom: 1.4; }
+}

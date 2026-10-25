@@ -50,6 +50,12 @@
 
 <div id="painel" class="oculto">
   <div class="painel-topo"><h3>Filtros e exibição</h3><button id="fecharPainel">✕</button></div>
+  <label>Modo de exibição
+    <select id="fModo">
+      <option value="completo">Completo (navegador, celular e TV)</option>
+      <option value="live">Live (vertical 9:16 para transmissão)</option>
+    </select>
+  </label>
   <label>Turno
     <select id="fTurno"><option value="2">2º turno (25/10)</option><option value="1">1º turno (04/10)</option></select>
   </label>
@@ -77,11 +83,11 @@
   <label class="check"><input type="checkbox" id="fCidades"> Mostrar cidades no mapa</label>
   <label class="check"><input type="checkbox" id="fRotulos"> Rótulos no mapa</label>
   <label class="check"><input type="checkbox" id="fBrasil"> Mostrar total oficial do TSE</label>
+  <label class="check"><input type="checkbox" id="fProjecao"> Projeção do resultado final (2º turno)</label>
   <label class="check"><input type="checkbox" id="fSom"> Sinal sonoro quando chegarem novos dados</label>
   <hr>
-  <label class="check"><input type="checkbox" id="fVertical"> Layout vertical 9:16 (TikTok)</label>
-  <label class="check"><input type="checkbox" id="fTour"> Tour automático pelos países</label>
-  <label>Tempo por país no tour
+  <label class="check"><input type="checkbox" id="fTour"> Tour automático (Brasil, estados e exterior)</label>
+  <label>Tempo por local no tour
     <select id="fTourSeg"><option value="6">6 s</option><option value="8">8 s</option><option value="12">12 s</option><option value="20">20 s</option></select>
   </label>
   <label>Atualização automática
@@ -91,9 +97,23 @@
     <button id="btnAtualizar">Atualizar agora</button>
     <button id="btnCache">Limpar cache</button>
   </div>
-  <p class="dica">Atalhos: <b>F</b> filtros · <b>T</b> tour · <b>V</b> vertical · <b>S</b> som · <b>R</b> atualizar · <b>Esc</b> total · <b>Backspace</b> voltar.<br>
-  Clique em um estado, município, país ou cidade no mapa (ou no ranking) para ver os votos daquela seleção.</p>
+  <p class="dica">Atalhos: <b>F</b> filtros · <b>L</b> modo live/completo · <b>T</b> tour · <b>S</b> som · <b>R</b> atualizar · <b>Esc</b> total · <b>Backspace</b> voltar.<br>
+  Clique em um estado, município, país ou cidade no mapa (ou no ranking) para ver os votos daquela seleção.<br>
+  Endereços diretos: <b>?modo=live</b> (transmissão), <b>?modo=tv</b> (TV, com tour), <b>?modo=completo</b>.</p>
   <p class="dica" id="statusCarga"></p>
+</div>
+
+<div id="metodo" class="oculto" onclick="if (event.target === this) this.classList.add('oculto')">
+  <div class="metodo-caixa">
+    <button class="metodo-fechar" onclick="document.getElementById('metodo').classList.add('oculto')">✕</button>
+    <h2>Como calculamos a projeção</h2>
+    <h3>O modelo</h3>
+    <p>Cada local apurado no 2º turno é comparado com ele mesmo no 1º turno: no Brasil, município por município (o TSE publica o Brasil por município); no exterior, seção por seção, pelos boletins de urna dos dois turnos. Com isso o modelo mede, por estado e separando capital e interior, quanto cada candidato cresceu ou encolheu em relação ao 1º turno. Isso já inclui para onde foram os votos dos outros candidatos e a mudança no comparecimento. Depois, aplica a mesma variação à parte que ainda falta apurar, usando o 1º turno dela como ponto de partida. Onde ainda há pouca coisa apurada, usa a variação do estado, da região ou do país.</p>
+    <h3>A faixa provável</h3>
+    <p>A faixa vem de reamostragem dos locais já apurados (intervalo de 90%), somada a uma margem mínima de segurança: 3 pontos com nada apurado, diminuindo até zero com tudo apurado. A projeção só indica um vencedor quando a faixa inteira fica de um lado dos 50%, pela mesma regra para os dois candidatos.</p>
+    <h3>Limitações</h3>
+    <p>A projeção é <b>experimental</b>. Ela não foi testada com apurações de anos anteriores, porque 2014 a 2022 não estão mais no sistema de resultados do TSE. Num teste simulado com o 1º turno de 2026 e apuração fora de ordem, o erro foi de cerca de 1 ponto com 10% do eleitorado apurado e quase zero a partir de 20%. Mas uma simulação tende a ser otimista. O resultado que vale é o oficial do TSE.</p>
+  </div>
 </div>
 
 <script src="lib/leaflet.js"></script>

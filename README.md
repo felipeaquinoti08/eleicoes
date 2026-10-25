@@ -1,14 +1,34 @@
 # Apuração de Eleições
 
-Painel ao vivo da apuração das Eleições 2026 com dados públicos do TSE: Brasil (estado e município) e exterior (continente, país, cidade e seção) num mesmo mapa clicável, com filtros, sinal sonoro quando chegam dados novos e um layout vertical 9:16 para transmitir no TikTok.
+Painel ao vivo da apuração das Eleições 2026 com dados públicos do TSE: Brasil (estado e município) e exterior (continente, país, cidade e seção) num mesmo mapa clicável, com projeção do resultado final, filtros e sinal sonoro quando chegam dados novos. Funciona no navegador, no celular e na TV, e tem um modo para transmissão ao vivo.
 
 ## O que tem
 
-- **Mapa único, Brasil + exterior.** Clique num estado para ver os municípios dele, num país para ver as cidades, numa cidade do exterior para ver seção por seção. O placar, as estatísticas e o ranking mostram sempre a seleção atual.
+- **Mapa único, Brasil + exterior.** Clique num estado para ver os municípios dele, num país para ver as cidades, numa cidade do exterior para ver seção por seção. O placar, as estatísticas e o ranking mostram sempre a seleção atual. Municípios em cinza ainda não têm votos publicados pelo TSE.
 - **Navegação**: `Total › Brasil › Região › Estado › Município` e `Total › Exterior › Continente › País › Cidade › Seção`.
 - **Filtros**: turno, fonte dos dados do exterior, "ir para" (região, estado, continente, país), busca de município ou cidade, cor do mapa (quem lidera ou % de um candidato), ordenação do ranking, só locais com votos.
-- **Para transmitir**: layout vertical 9:16, tour automático (Total → Brasil → estados → exterior → países), letreiro com os resultados e rótulos no mapa.
+- **Projeção do resultado final** (2º turno, experimental): veja abaixo.
 - **Sinal sonoro**: bipe no estilo da urna e um aviso "NOVOS DADOS" sempre que a apuração avança. O navegador só libera som depois de um clique na página, então o botão 🔊 pisca até isso acontecer.
+
+## Modos de exibição
+
+| Modo | Para quê | Como abrir |
+|---|---|---|
+| **Completo** (padrão) | Navegador e celular. Layout horizontal no computador, empilhado com rolagem no celular. | `https://SEU-DOMINIO/` |
+| **TV** | Modo completo, com o tour automático ligado e os botões escondidos. Em telas grandes (TVs 4K, monitores acima de 2200 px) os textos ficam maiores. | `https://SEU-DOMINIO/?modo=tv` |
+| **Live** | Transmissão (TikTok, OBS): vertical 9:16, tour automático, blocos compactos para sobrar espaço ao mapa. | `https://SEU-DOMINIO/?modo=live` |
+
+Também dá para trocar em ⚙ → *Modo de exibição*, ou com a tecla **L**.
+
+## Projeção (experimental)
+
+No 2º turno, o placar mostra uma **projeção do resultado final** para o Total, o Brasil e cada estado, com uma faixa provável e um veredito.
+
+- **Modelo**: cada local apurado no 2º turno é comparado com ele mesmo no 1º turno. No Brasil a comparação é município a município, porque o TSE publica o Brasil por município. No exterior é seção a seção, pelos boletins de urna dos dois turnos. Por estado, separando capital e interior, o modelo mede quanto cada candidato variou em relação ao 1º turno (o que já inclui a transferência dos votos dos outros candidatos e a mudança de comparecimento) e aplica essa variação à parte que falta apurar. Onde há pouca coisa apurada, usa a variação do estado, da região ou do país.
+- **Faixa provável**: reamostragem dos locais apurados (intervalo de 90%), mais uma margem mínima de segurança: 3 pontos com nada apurado, diminuindo até zero com tudo apurado.
+- **Veredito**: só indica vencedor quando a faixa inteira fica de um lado dos 50%. A projeção só aparece depois de 2% do eleitorado apurado.
+- **Limitação**: não foi validada com apurações anteriores, porque 2014 a 2022 não estão mais no sistema do TSE. Num teste simulado com apuração fora de ordem, o erro foi de cerca de 1 ponto com 10% apurado e quase zero a partir de 20%, mas simulações tendem a ser otimistas.
+- O cálculo roda no servidor (`server/projecao.js`) a cada passada da coleta e é publicado em `dados/projecao-2.json`. Precisa da base municipal do 1º turno, que o job baixa na primeira hora depois de subir o container. Desligue em ⚙ → *Projeção*.
 
 ## Histórico (últimas 20 eleições)
 
@@ -143,12 +163,12 @@ Clique duas vezes em **`INICIAR.bat`**. Na primeira vez ele baixa um Node.js por
 
 Alternativa mais leve: `powershell -ExecutionPolicy Bypass -File servidor.ps1` serve só o site, e o navegador consulta o TSE direto (sem job e sem municípios em lote).
 
-## Atalhos durante a live
+## Atalhos de teclado
 
 | Tecla | Ação |
 |---|---|
 | `F` | Abre/fecha os filtros |
-| `V` | Layout vertical 9:16 (capture a janela no TikTok Live Studio ou OBS) |
+| `L` | Alterna entre modo completo e modo live (vertical 9:16) |
 | `T` | Liga/desliga o tour automático |
 | `S` | Liga/desliga o som |
 | `R` | Atualiza agora |
@@ -162,6 +182,7 @@ public/            site estático (index.html, historico.html, app.js, bu.js, so
   cidades.js       cidades do exterior com país e coordenadas
   municipios.js    municípios (código TSE -> UF, nome, código IBGE, capital)
 server/sync.js     job de sincronização com o TSE
+server/projecao.js  projeção do 2º turno a partir do 1º turno
 server/historico.js job do histórico (últimas 20 eleições)
 server/server.js   servidor HTTP (site + snapshots + /saude)
 iniciar.ps1        roda tudo localmente com Node portátil

@@ -40,10 +40,18 @@ const espera = ms => new Promise(r => setTimeout(r, ms));
 // ---------------------------------------------------------------- configuração
 const PADRAO = {
   turno: '2', fonte: 'auto', destaque: 'vencedor', ordem: 'comp', soComVotos: true, cidades: true,
-  rotulos: true, brasil: true, vertical: false, tour: false, tourSeg: '8', intervalo: '60', som: true,
+  rotulos: true, brasil: true, projecao: true, modo: 'completo', tour: false, tourSeg: '8', intervalo: '60', som: true,
 };
 const cfg = Object.assign({}, PADRAO, JSON.parse(localStorage.getItem('cfg-apuracao') || '{}'));
 const salvarCfg = () => localStorage.setItem('cfg-apuracao', JSON.stringify(cfg));
+
+// Modos de exibição: "completo" (navegador, celular e TV, padrão) e "live" (vertical 9:16 com tour, para transmissão).
+// O endereço pode fixar o modo, útil para TV e OBS: ?modo=live, ?modo=completo ou ?modo=tv (completo, em tela cheia, com tour).
+const parametroModo = new URLSearchParams(location.search).get('modo');
+if (parametroModo === 'live' || parametroModo === 'completo') cfg.modo = parametroModo;
+const modoTV = parametroModo === 'tv';
+if (modoTV) { cfg.modo = 'completo'; cfg.tour = true; }
+const ehLive = () => cfg.modo === 'live';
 
 // ---------------------------------------------------------------- estado
 let T = TURNOS[cfg.turno];
@@ -60,6 +68,7 @@ let atualizando = false, ultimaAtualizacao = null, timerAtual = null, timerTour 
 let pendentesBU = 0;
 let geracao = 0; // incrementa a cada troca de turno para descartar downloads antigos
 let assinaturaAnterior = null;
+let projecao = null;          // dados/projecao-2.json (só no modo servidor, 2º turno)
 
 function chaveCache() { return 'bu-' + T.pleito; }
 function carregarCache() {
@@ -270,6 +279,10 @@ async function atualizar() {
       try { ok = await carregarSnapshot(); } catch (e) { ok = false; console.warn(e); }
       const uf = ufEmFoco();
       if (uf) await carregarMunicipiosUF(uf).catch(e => console.warn(e));
+      projecao = null;
+      if (cfg.turno === '2') {
+        try { const rp = await fetch('dados/projecao-2.json', { cache: 'no-cache' }); if (rp.ok) projecao = await rp.json(); } catch { /* sem projeção */ }
+      }
       status(ok ? '' : 'Servidor ainda sincronizando com o TSE…');
       return;
     }
@@ -622,8 +635,8 @@ function limitesUFs(lista) {
 
 function enquadrar() {
   const op = { padding: [30, 30], duration: 1 };
-  if (sel.tipo === 'total') { mapa.flyTo([-5, -35], cfg.vertical ? 2.25 : 2.75, { duration: 1 }); return; }
-  if (sel.tipo === 'mundo') { mapa.flyTo([20, 10], cfg.vertical ? 1.5 : 2, { duration: 1 }); return; }
+  if (sel.tipo === 'total') { mapa.flyTo([-5, -35], ehLive() ? 2.25 : 2.75, { duration: 1 }); return; }
+  if (sel.tipo === 'mundo') { mapa.flyTo([20, 10], ehLive() ? 1.5 : 2, { duration: 1 }); return; }
   if (sel.tipo === 'brasil') { const b = limitesUFs(UFS); if (b) mapa.flyToBounds(b, op); return; }
   if (sel.tipo === 'regiao') { const b = limitesUFs(REGIOES[sel.id][1]); if (b) mapa.flyToBounds(b, { ...op, maxZoom: 6 }); return; }
   if (sel.tipo === 'uf') { const b = limitesUFs([sel.id]); if (b) mapa.flyToBounds(b, { ...op, maxZoom: 8 }); return; }
@@ -743,7 +756,7 @@ function renderPlacar(d, r) {
     const pa = tot ? 100 * a.votos / tot : 50;
     el.className = 'duelo';
     el.innerHTML = `<div class="duelo-lados">${lado(a, 'esq')}<div class="vs">×</div>${lado(b, 'dir')}</div>
-      <div class="duelo-barra"><div style="width:${pa}%;background:${a.cor}"></div><div style="width:${100 - pa}%;background:${b.cor}"></div><i></i></div>`;
+      <div class="duelo-barra"><div style="width:${pa}%;background:${a.cor}"></div><div style="width:${100 - pa}%;background:${b.cor}"></div><i></i></div>` + htmlProjecao();
   } else {
     el.className = 'barras';
     const max = Math.max(1, ...r.lista.map(c => c.pct));
@@ -756,6 +769,29 @@ function renderPlacar(d, r) {
       </div>`).join('');
   }
 }
+
+// projeção do resultado final (experimental): só para Total, Brasil e estados, no 2º turno
+function escopoProjecao() {
+  if (!cfg.projecao || !projecao || cfg.turno !== '2') return null;
+  const k = sel.tipo === 'total' ? 'total' : sel.tipo === 'brasil' ? 'brasil' : sel.tipo === 'uf' ? sel.id : null;
+  return k ? { k, p: projecao.disponivel ? projecao.escopos[k] : null } : null;
+}
+function htmlProjecao() {
+  const e = escopoProjecao();
+  if (!e) return '';
+  const topo = '<div class="proj-topo"><b>PROJEÇÃO</b> <span class="proj-exp">experimental</span><button class="proj-ajuda" onclick="mostrarMetodo()">como calculamos</button></div>';
+  if (!e.p) return `<div class="projecao">${topo}<div class="proj-indef">${esc(projecao.motivo || 'sem dados suficientes para este local')}</div></div>`;
+  const [a, b] = cands.map(c => ({ ...c, pct: e.p.pct[c.n], faixa: e.p.faixa[c.n] }));
+  const venc = e.p.vencedor ? cands.find(c => String(c.n) === String(e.p.vencedor)) : null;
+  const [lo, hi] = a.faixa;
+  return `<div class="projecao">${topo}
+    <div class="proj-linha"><span style="color:${a.cor}">${esc(a.nome)} <b>${pct(a.pct)}</b></span><span style="color:${b.cor}"><b>${pct(b.pct)}</b> ${esc(b.nome)}</span></div>
+    <div class="proj-barra" style="--a:${a.cor};--b:${b.cor}"><div class="proj-faixa" style="left:${lo}%;width:${hi - lo}%"></div><div class="proj-ponto" style="left:${a.pct}%"></div><i></i></div>
+    <div class="proj-rodape">faixa provável de ${esc(a.nome)}: ${pct(lo)} a ${pct(hi)} · ${pct(e.p.pesoApurado, 0)} do eleitorado apurado</div>
+    <div class="proj-veredito ${venc ? '' : 'indef'}" ${venc ? `style="background:${venc.cor}"` : ''}>${venc ? `Projeção indica vitória de ${esc(venc.nome)}` : 'Ainda indefinido: a faixa provável cruza os 50%'}</div>
+  </div>`;
+}
+function mostrarMetodo() { $('metodo').classList.remove('oculto'); }
 
 function renderEstatisticas(d, r) {
   const itens = [
@@ -919,7 +955,7 @@ function renderLegenda() {
   const el = $('legenda');
   if (cfg.destaque === 'vencedor') {
     el.innerHTML = '<b>Quem lidera</b>' + cands.filter((c, i) => cands.length <= 4 || i < 6).map(c => `<span><i style="background:${c.cor}"></i>${esc(c.nome)}</span>`).join('') +
-      '<small>cor mais forte = vantagem maior</small>';
+      '<small>cor mais forte = vantagem maior</small><span><i class="sem-dados"></i><small>cinza = ainda sem apuração</small></span>';
   } else {
     const c = cands.find(x => String(x.n) === cfg.destaque);
     el.innerHTML = `<b>% de ${esc(c.nome)}</b><div class="grad" style="background:linear-gradient(90deg, transparent, ${c.cor})"></div><span class="esc"><small>0%</small><small>100%</small></span>`;
@@ -1005,7 +1041,9 @@ function buscar(q) {
 }
 
 function aplicarLayout() {
-  document.body.classList.toggle('vertical', cfg.vertical);
+  document.body.classList.toggle('vertical', ehLive());
+  document.body.classList.toggle('modo-live', ehLive());
+  document.body.classList.toggle('modo-tv', modoTV);
   setTimeout(() => { mapa.invalidateSize(); enquadrar(); }, 50);
 }
 
@@ -1018,21 +1056,27 @@ function atualizarBotaoSom() {
 }
 
 function ligarFiltros() {
-  const chk = { fSoComVotos: 'soComVotos', fCidades: 'cidades', fRotulos: 'rotulos', fBrasil: 'brasil', fVertical: 'vertical', fTour: 'tour', fSom: 'som' };
-  const sels = { fTurno: 'turno', fFonte: 'fonte', fDestaque: 'destaque', fOrdem: 'ordem', fTourSeg: 'tourSeg', fIntervalo: 'intervalo' };
+  const chk = { fProjecao: 'projecao', fSoComVotos: 'soComVotos', fCidades: 'cidades', fRotulos: 'rotulos', fBrasil: 'brasil', fTour: 'tour', fSom: 'som' };
+  const sels = { fModo: 'modo', fTurno: 'turno', fFonte: 'fonte', fDestaque: 'destaque', fOrdem: 'ordem', fTourSeg: 'tourSeg', fIntervalo: 'intervalo' };
   for (const [id, k] of Object.entries(chk)) $(id).checked = cfg[k];
   for (const [id, k] of Object.entries(sels)) if ($(id).querySelector(`option[value="${cfg[k]}"]`)) $(id).value = cfg[k];
 
   for (const [id, k] of Object.entries(chk)) $(id).onchange = () => {
     cfg[k] = $(id).checked; salvarCfg();
-    if (k === 'vertical') aplicarLayout();
+
     if (k === 'tour') cfg.tour ? iniciarTour() : pararTour(false);
     if (k === 'som') { atualizarBotaoSom(); if (cfg.som) Som.tocar(); }
     render();
   };
   for (const [id, k] of Object.entries(sels)) $(id).onchange = () => {
     cfg[k] = $(id).value; salvarCfg();
-    if (k === 'turno') trocarTurno();
+    if (k === 'modo') {
+      // o live já entra com o tour rodando; o completo começa parado para o visitante navegar
+      cfg.tour = ehLive(); $('fTour').checked = cfg.tour; salvarCfg();
+      cfg.tour ? iniciarTour() : pararTour(false);
+      aplicarLayout(); render();
+    }
+    else if (k === 'turno') trocarTurno();
     else if (k === 'fonte') { render(); atualizar(); }
     else if (k === 'intervalo') programarAtualizacao();
     else if (k === 'tourSeg' && cfg.tour) iniciarTour();
@@ -1054,7 +1098,7 @@ function ligarFiltros() {
     const k = e.key.toLowerCase();
     if (k === 'f') $('painel').classList.toggle('oculto');
     else if (k === 't') { $('fTour').checked = !cfg.tour; $('fTour').onchange(); }
-    else if (k === 'v') { $('fVertical').checked = !cfg.vertical; $('fVertical').onchange(); }
+    else if (k === 'v' || k === 'l') { $('fModo').value = ehLive() ? 'completo' : 'live'; $('fModo').onchange(); }
     else if (k === 's') { $('fSom').checked = !cfg.som; $('fSom').onchange(); }
     else if (k === 'r') atualizar();
     else if (k === 'escape') { if (sel.tipo !== 'total') selecionar({ tipo: 'total' }); }
