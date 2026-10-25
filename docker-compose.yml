@@ -12,15 +12,14 @@ services:
       CACHE_DADOS_S: "30"       # cache dos snapshots no Cloudflare/navegador (segundos)
       CONCORRENCIA: "4"         # downloads simultâneos ao TSE (menos = menos risco de bloqueio 429)
     volumes:
-      - dados:/app/dados
+      # pasta do próprio servidor, ao lado deste arquivo: os resultados sobrevivem a qualquer redeploy
+      # (rebuild, troca de nome do projeto, down -v) e são servidos assim que o container sobe
+      - ./dados:/app/dados
     # sem porta publicada no host: só o Nginx Proxy Manager, na mesma rede, acessa o container
     expose:
       - "8080"
     networks:
       - npm
-
-volumes:
-  dados:
 
 networks:
   npm:

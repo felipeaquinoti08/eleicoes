@@ -15,9 +15,9 @@ COPY public ./public
 COPY server ./server
 RUN mkdir -p /app/dados && chown -R node:node /app/dados
 
-USER node
+# começa como root só para acertar o dono da pasta de dados montada do servidor (./dados);
+# o server.js passa a rodar como o usuário "node" logo em seguida
 EXPOSE 8080
-VOLUME ["/app/dados"]
 
 # usa o próprio Node (sem depender de wget/curl, que variam entre imagens base)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \

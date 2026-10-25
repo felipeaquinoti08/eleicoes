@@ -73,7 +73,7 @@ TSE ──► server/sync.js (job) ──► dados/*.json ──► server/serve
 
 - O **job de sincronização** é o único cliente que fala com o TSE. A cada ciclo (5 min por padrão) baixa o total do país, as 27 UFs, o exterior e os BUs novos. Os municípios rodam num loop separado e incremental: o arquivo agregado de cada UF diz quais municípios mudaram, e só esses são baixados.
 - Os resultados ficam em snapshots (`dados/turno-N.json` e `dados/turno-N-mun-<UF>.json`). O painel lê só esses arquivos, então o número de espectadores não aumenta a carga sobre o TSE, que em dia de eleição responde muito HTTP 429. O job tenta de novo com espera crescente e mantém o último dado bom quando algo falha.
-- Os BUs já decodificados e o estado dos municípios ficam em cache no volume `dados/`, e sobrevivem a reinícios.
+- Tudo o que foi coletado (snapshots, BUs decodificados, municípios, projeção, histórico) fica na pasta `dados/` do servidor. Ao subir de novo, o servidor entrega esses arquivos na hora, e o ciclo de coleta só atualiza por cima.
 - Sem servidor (abrindo os arquivos de `public/` com `servidor.ps1`), o painel percebe que `/saude` não existe e consulta o TSE direto do navegador.
 
 ## Rodar com Docker
@@ -86,6 +86,23 @@ cp .env.example .env                               # e ponha esse nome em NPM_RE
 docker compose up -d --build
 docker compose logs -f painel                      # acompanha a sincronização
 docker inspect --format "{{.State.Health.Status}}" apuracao-eleicoes   # healthy quando o servidor responde
+```
+
+### Dados persistentes entre deploys
+
+Os resultados ficam na pasta **`dados/` ao lado do `docker-compose.yml`**, montada no container. Ela está no `.gitignore`, então `git pull` não mexe nela, e sobrevive a rebuild, `down -v` e troca de nome do projeto. Ao subir, o log mostra o que já está sendo servido:
+
+```
+servindo dados já gravados imediatamente: turno-2.json (2026-10-25T20:51:57Z), …, 32 arquivos de municípios
+```
+
+O container começa como root só para acertar o dono dessa pasta, e em seguida o servidor passa a rodar como o usuário `node` (uid 1000).
+
+**Vindo de uma versão anterior (volume nomeado)?** Copie os dados do volume antigo para a pasta uma vez, antes do novo `up`:
+```bash
+docker volume ls | grep dados                       # ex.: eleicoes_dados
+mkdir -p dados
+docker run --rm -v eleicoes_dados:/de -v "$(pwd)/dados":/para alpine cp -a /de/. /para/
 ```
 
 | Variável | Padrão | Uso |

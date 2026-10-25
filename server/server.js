@@ -14,6 +14,35 @@ const DIR_PUBLIC = path.join(__dirname, '..', 'public');
 const DIR_DADOS = process.env.DIR_DADOS || path.join(__dirname, '..', 'dados');
 const CACHE_DADOS_S = +process.env.CACHE_DADOS_S || 30;
 
+// A pasta de dados pode ser uma pasta do servidor montada no container (./dados), criada pelo Docker como root.
+// Se o processo começa como root, acerta o dono da pasta e passa a rodar como o usuário "node" (uid 1000).
+function prepararPastaDados() {
+  fs.mkdirSync(DIR_DADOS, { recursive: true });
+  if (typeof process.getuid !== 'function' || process.getuid() !== 0) return;
+  const UID = +process.env.APP_UID || 1000, GID = +process.env.APP_GID || 1000;
+  const acertar = p => {
+    try { fs.lchownSync(p, UID, GID); } catch { /* segue */ }
+    if (fs.lstatSync(p).isDirectory()) for (const n of fs.readdirSync(p)) acertar(path.join(p, n));
+  };
+  acertar(DIR_DADOS);
+  process.setgid(GID);
+  process.setuid(UID);
+}
+prepararPastaDados();
+
+// Ao subir, os resultados já gravados são servidos na hora; o ciclo de coleta só atualiza por cima.
+function resumoDadosExistentes() {
+  const itens = [];
+  for (const nome of ['turno-2.json', 'turno-1.json', 'projecao-2.json', path.join('historico', 'indice.json')]) {
+    try { itens.push(`${nome} (${fs.statSync(path.join(DIR_DADOS, nome)).mtime.toISOString()})`); } catch { /* ainda não existe */ }
+  }
+  let mun = 0;
+  try { mun = fs.readdirSync(DIR_DADOS).filter(n => /^turno-\d-mun-/.test(n)).length; } catch { /* vazio */ }
+  return itens.length
+    ? `servindo dados já gravados imediatamente: ${itens.join(', ')}, ${mun} arquivos de municípios`
+    : 'pasta de dados vazia: os resultados aparecem após o primeiro ciclo de coleta';
+}
+
 const TIPOS = {
   '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
@@ -97,7 +126,8 @@ const servidor = http.createServer((req, res) => {
 });
 
 servidor.listen(PORTA, () => {
-  console.log(`painel em http://0.0.0.0:${PORTA}/`);
+  console.log(`painel em http://0.0.0.0:${PORTA}/ (dados em ${DIR_DADOS})`);
+  console.log(resumoDadosExistentes());
   if (process.env.SYNC !== '0') sync.iniciar();
   if (process.env.HISTORICO !== '0') historico.iniciarHistorico();
 });
