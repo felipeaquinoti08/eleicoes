@@ -2,6 +2,7 @@ services:
   painel:
     build: .
     image: apuracao-eleicoes:latest
+    pull_policy: build        # imagem construída aqui a partir do Dockerfile, não existe em registry
     container_name: apuracao-eleicoes
     restart: unless-stopped
     environment:
