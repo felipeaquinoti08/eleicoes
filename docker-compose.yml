@@ -12,9 +12,16 @@ services:
       CONCORRENCIA: "6"         # downloads simultâneos ao TSE
     volumes:
       - dados:/app/dados
-    ports:
-      # porta 80 do servidor -> 8080 do container; o Cloudflare (proxy, nuvem laranja) acessa por ela
-      - "80:8080"
+    # sem porta publicada no host: só o Nginx Proxy Manager, na mesma rede, acessa o container
+    expose:
+      - "8080"
+    networks:
+      - npm
 
 volumes:
   dados:
+
+networks:
+  npm:
+    external: true
+    name: ${NPM_REDE:-npm_default}   # rede do Nginx Proxy Manager (veja com: docker network ls)

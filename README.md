@@ -58,10 +58,13 @@ TSE ──► server/sync.js (job) ──► dados/*.json ──► server/serve
 
 ## Rodar com Docker
 
+O container não publica porta no host: ele entra na rede Docker do Nginx Proxy Manager, e só o NPM o acessa.
+
 ```bash
-docker compose up -d --build
-docker compose logs -f painel        # acompanha a sincronização
-curl http://localhost/saude          # horário do último snapshot de cada turno
+docker network ls                                  # descubra o nome da rede do NPM (ex.: npm_default)
+NPM_REDE=npm_default docker compose up -d --build
+docker compose logs -f painel                      # acompanha a sincronização
+docker exec apuracao-eleicoes wget -qO- http://127.0.0.1:8080/saude   # horário do último snapshot
 ```
 
 | Variável | Padrão | Uso |
@@ -75,15 +78,22 @@ curl http://localhost/saude          # horário do último snapshot de cada turn
 | `HISTORICO` | `1` | `0` desliga o download do histórico |
 | `HISTORICO_QTD` | `20` | Quantas eleições entram no histórico |
 
-## Publicar atrás do Cloudflare (proxy DNS)
+## Publicar com Nginx Proxy Manager
 
-1. No servidor: `docker compose up -d --build` (o compose publica a porta **80** do host para o container).
-2. No Cloudflare, crie um registro **A** do seu domínio para o IP do servidor com o **proxy ligado** (nuvem laranja).
-3. Em **SSL/TLS**, use o modo **Flexível** (o Cloudflare atende em HTTPS e fala HTTP com o servidor). Se puser um proxy reverso com certificado na frente do container, pode usar **Completo (estrito)**.
-4. Libere a porta 80 no firewall do servidor só para os [IPs do Cloudflare](https://www.cloudflare.com/ips/), para ninguém acessar a origem direto.
-5. **Cache**: o Cloudflare não faz cache de `.json` por padrão. Crie uma *Cache Rule*: se o caminho da URI começa com `/dados/`, então **Elegível para cache**, com TTL de borda vindo do cabeçalho `Cache-Control` (30 s). `/saude` responde com `no-store`.
+Caminho: visitante → Cloudflare → Nginx Proxy Manager → container.
 
-Com o cache ligado, cada ponto de presença do Cloudflare busca um snapshot no máximo duas vezes por minuto, não importa quantas pessoas estejam assistindo.
+**No NPM**, crie um *Proxy Host*:
+- *Domain Names*: o seu domínio
+- *Scheme* `http`, *Forward Hostname* `apuracao-eleicoes`, *Forward Port* `8080`
+- **Cache Assets: desligado.** Essa opção força cache longo em `.js`/`.css`, e o navegador do visitante ficaria com a versão antiga do painel. O próprio app já envia os cabeçalhos de cache certos.
+- *Block Common Exploits*: pode ligar. *Websockets*: não precisa.
+- Na aba *SSL*: o certificado de origem do Cloudflare (ou Let's Encrypt), com *Force SSL*.
+
+**Cache dos resultados**: configure no **painel do Cloudflare**, não no NPM. Em *Caching → Cache Rules → Create rule*:
+- *Quando*: `URI Path` começa com `/dados/`
+- *Então*: **Eligible for cache**; *Edge TTL*: **Use cache-control header if present**; *Browser TTL*: **Respect origin**
+
+É preciso porque o Cloudflare não faz cache de `.json` por padrão. O app manda `Cache-Control: max-age=30` nos snapshots, então cada ponto de presença do Cloudflare busca os resultados no NPM no máximo duas vezes por minuto, não importa quantas pessoas estejam assistindo. `/saude` responde com `no-store` e nunca fica em cache.
 
 ## Rodar na sua máquina, sem Docker (Windows)
 
