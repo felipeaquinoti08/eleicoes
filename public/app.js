@@ -1058,6 +1058,8 @@ function atualizarBotaoSom() {
 function ligarFiltros() {
   const chk = { fProjecao: 'projecao', fSoComVotos: 'soComVotos', fCidades: 'cidades', fRotulos: 'rotulos', fBrasil: 'brasil', fTour: 'tour', fSom: 'som' };
   const sels = { fModo: 'modo', fTurno: 'turno', fFonte: 'fonte', fDestaque: 'destaque', fOrdem: 'ordem', fTourSeg: 'tourSeg', fIntervalo: 'intervalo' };
+  // um controle ausente no HTML (ex.: página antiga em cache) não pode impedir a carga dos dados
+  for (const lista of [chk, sels]) for (const id of Object.keys(lista)) if (!$(id)) { console.warn('controle ausente:', id); delete lista[id]; }
   for (const [id, k] of Object.entries(chk)) $(id).checked = cfg[k];
   for (const [id, k] of Object.entries(sels)) if ($(id).querySelector(`option[value="${cfg[k]}"]`)) $(id).value = cfg[k];
 

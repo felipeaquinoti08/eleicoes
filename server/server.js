@@ -5,6 +5,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const crypto = require('crypto');
 const sync = require('./sync');
 const historico = require('./historico');
 
@@ -18,6 +19,27 @@ const TIPOS = {
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
   '.png': 'image/png', '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
 };
+
+// Versão do site = hash do conteúdo de public/. O HTML sai com ?v=<versão> em cada .js/.css local, então
+// uma atualização nunca mistura HTML novo com JavaScript antigo vindo do cache do navegador ou do Cloudflare.
+function calcularVersao() {
+  const h = crypto.createHash('sha1');
+  const andar = dir => {
+    for (const nome of fs.readdirSync(dir).sort()) {
+      const p = path.join(dir, nome);
+      if (fs.statSync(p).isDirectory()) andar(p);
+      else if (/\.(js|css|html)$/.test(nome)) h.update(nome).update(fs.readFileSync(p));
+    }
+  };
+  andar(DIR_PUBLIC);
+  return h.digest('hex').slice(0, 10);
+}
+const VERSAO = calcularVersao();
+function versionarHTML(html) {
+  return html
+    .replace(/(<(?:script|link)\b[^>]*\b(?:src|href)=")(?!https?:|\/\/)([^"?#]+\.(?:js|css))"/g, `$1$2?v=${VERSAO}"`)
+    .replace('<head>', `<head>\n  <script>window.VERSAO_APP = '${VERSAO}';</script>`);
+}
 
 function resolver(urlPath) {
   const p = decodeURIComponent(urlPath.split('?')[0]);
@@ -52,10 +74,16 @@ const servidor = http.createServer((req, res) => {
   fs.readFile(r.arq, (err, corpo) => {
     if (err) { res.writeHead(404, { 'Cache-Control': 'no-store' }); return res.end('não encontrado'); }
     const ext = path.extname(r.arq).toLowerCase();
+    const versionado = /[?&]v=/.test(req.url);
+    let cache;
+    if (r.dados) cache = `public, max-age=${CACHE_DADOS_S}, s-maxage=${CACHE_DADOS_S}`; // snapshots: cache curto
+    else if (ext === '.html') cache = 'no-cache';                                      // HTML sempre revalida
+    else if (versionado) cache = 'public, max-age=31536000, immutable';                 // ?v= muda a cada versão
+    else cache = 'public, max-age=300';
+    if (ext === '.html') corpo = Buffer.from(versionarHTML(corpo.toString('utf8')));
     const cab = {
       'Content-Type': TIPOS[ext] || 'application/octet-stream',
-      // snapshots: cache curto na borda do Cloudflare; site: cache moderado
-      'Cache-Control': r.dados ? `public, max-age=${CACHE_DADOS_S}, s-maxage=${CACHE_DADOS_S}` : 'public, max-age=300',
+      'Cache-Control': cache,
       'Vary': 'Accept-Encoding',
     };
     if (/\bgzip\b/.test(req.headers['accept-encoding'] || '') && corpo.length > 1024 && ext !== '.png' && ext !== '.jpeg') {
