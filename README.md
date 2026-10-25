@@ -65,7 +65,7 @@ docker network ls                                  # descubra o nome da rede do 
 cp .env.example .env                               # e ponha esse nome em NPM_REDE
 docker compose up -d --build
 docker compose logs -f painel                      # acompanha a sincronização
-docker exec apuracao-eleicoes wget -qO- http://127.0.0.1:8080/saude   # horário do último snapshot
+docker inspect --format "{{.State.Health.Status}}" apuracao-eleicoes   # healthy quando o servidor responde
 ```
 
 | Variável | Padrão | Uso |
@@ -78,6 +78,19 @@ docker exec apuracao-eleicoes wget -qO- http://127.0.0.1:8080/saude   # horário
 | `PORTA` | `8080` | Porta do servidor dentro do container |
 | `HISTORICO` | `1` | `0` desliga o download do histórico |
 | `HISTORICO_QTD` | `20` | Quantas eleições entram no histórico |
+
+### ARM e x86
+
+A imagem base `node:22-alpine` é publicada para **amd64 (x86)**, **arm64** (Oracle Ampere, AWS Graviton, Raspberry Pi 4/5 com sistema 64 bits) e **arm/v7** (ARM 32 bits). O app é JavaScript puro, sem dependências nativas. Em qualquer um desses servidores, `docker compose up -d --build` gera a imagem da arquitetura da própria máquina, sem nenhuma mudança.
+
+Para gerar num computador uma imagem que rode nas duas arquiteturas (por exemplo, para publicar num registry):
+
+```bash
+docker buildx create --use                     # uma vez
+docker buildx build --platform linux/amd64,linux/arm64 -t SEU_REGISTRY/apuracao-eleicoes:latest --push .
+```
+
+Se a imagem Alpine der problema em alguma placa ARM, dá para trocar a base sem mexer no resto: `docker compose build --build-arg NODE_IMAGE=node:22-bookworm-slim`.
 
 ## Publicar com Nginx Proxy Manager
 
