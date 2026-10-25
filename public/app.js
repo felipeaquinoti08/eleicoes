@@ -444,7 +444,7 @@ const camadaCidades = L.layerGroup().addTo(mapa);
 
 // --- Brasil: UFs e municípios
 let camadaUFs = null;
-fetch('geo/ufs.json').then(r => r.json()).then(geo => {
+carregarGeo('ufs').then(geo => {
   camadaUFs = L.geoJSON(geo, {
     pane: 'ufPane',
     onEachFeature: (f, layer) => {
@@ -456,13 +456,12 @@ fetch('geo/ufs.json').then(r => r.json()).then(geo => {
   render();
 });
 let camadaMun = null, ufCamadaMun = null;
-const geoMunCache = {};
 async function mostrarMunicipios(uf) {
   if (ufCamadaMun === uf) return;
   if (camadaMun) { mapa.removeLayer(camadaMun); camadaMun = null; }
   ufCamadaMun = uf;
   if (!uf) return;
-  const geo = geoMunCache[uf] ||= await (await fetch(`geo/mun-${uf}.json`)).json();
+  const geo = await carregarGeo(`mun-${uf}`);
   if (ufCamadaMun !== uf) return;
   camadaMun = L.geoJSON(geo, {
     pane: 'munPane',

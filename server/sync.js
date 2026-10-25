@@ -63,8 +63,6 @@ function gravarJSON(arquivo, obj) {
   fs.renameSync(tmp, arquivo); // troca atômica: o servidor nunca entrega arquivo pela metade
 }
 
-const oficiaisAnteriores = {};
-const ufsAnteriores = {};
 
 // cache de BUs já decodificados (sobrevive a reinícios do container)
 const caches = {};
@@ -91,35 +89,55 @@ async function baixarFotos(n, T, candidatos) {
   }
 }
 
-async function sincronizarTurno(n) {
-  const T = TURNOS[n];
+// Estado de cada turno, montado por dois loops independentes (Brasil e exterior) e publicado num snapshot só.
+// Separados porque o download dos BUs do exterior pode levar minutos sob 429 e não pode atrasar os estados.
+const estados = {};
+function estadoDo(n) {
+  if (!estados[n]) {
+    let ant = {};
+    try { ant = JSON.parse(fs.readFileSync(path.join(DIR_DADOS, `turno-${n}.json`), "utf8")); } catch { /* primeiro uso */ }
+    estados[n] = { candidatos: ant.candidatos || [], ofExterior: ant.ofExterior || null, brasil: ant.brasil || null, ufs: ant.ufs || {}, cidades: ant.cidades || {} };
+  }
+  return estados[n];
+}
+function publicar(n) {
+  const T = TURNOS[n], e = estadoDo(n);
+  if (!e.candidatos.length) return;
+  gravarJSON(path.join(DIR_DADOS, `turno-${n}.json`), { gerado: new Date().toISOString(), turno: n, ele: T.ele, pleito: T.pleito, ...e });
+}
+
+const fotosEmAndamento = {};
+async function sincronizarNacional(n) {
+  const T = TURNOS[n], e = estadoDo(n);
+  const inicio = Date.now();
+  const zzJ = await getJSON(`${BASE}/${T.ele}/dados/zz/zz-c0001-e${pad(T.ele, 6)}-u.json`);
+  e.candidatos = candidatosDe(zzJ).sort((a, b) => a.n - b.n);
+  e.ofExterior = oficialDe(zzJ);
+  if (!fotosEmAndamento[n]) { // em paralelo: as fotos não seguram o resultado
+    fotosEmAndamento[n] = baixarFotos(n, T, e.candidatos).finally(() => { fotosEmAndamento[n] = null; });
+  }
+  try { e.brasil = oficialDe(await getJSON(`${BASE}/${T.ele}/dados/br/br-c0001-e${pad(T.ele, 6)}-u.json`)); } catch (er) { log("aviso brasil:", er.message); }
+  // totalização oficial por UF (o Brasil todo cabe em 27 arquivos); se uma falhar, fica o valor anterior
+  let falhas = 0;
+  falhas = await emParalelo(UFS, CONCORRENCIA, async uf => {
+    const u = uf.toLowerCase();
+    e.ufs[uf] = oficialDe(await getJSON(`${BASE}/${T.ele}/dados/${u}/${u}-c0001-e${pad(T.ele, 6)}-u.json`));
+  });
+  publicar(n);
+  const sec = Object.values(e.ufs).reduce((a, u) => a + u.secRec, 0);
+  log(`turno ${n}: Brasil ${sec} seções nas UFs${falhas ? `, ${falhas} UFs com falha` : ""} em ${((Date.now() - inicio) / 1000).toFixed(1)}s`);
+}
+
+async function sincronizarExterior(n) {
+  const T = TURNOS[n], e = estadoDo(n);
   const inicio = Date.now();
   const cache = cacheDo(T.pleito);
-
-  const zzJ = await getJSON(`${BASE}/${T.ele}/dados/zz/zz-c0001-e${pad(T.ele, 6)}-u.json`);
-  const candidatos = candidatosDe(zzJ).sort((a, b) => a.n - b.n);
-  const ofExterior = oficialDe(zzJ);
-
-  await baixarFotos(n, T, candidatos);
-
-  let brasil = null;
-  try { brasil = oficialDe(await getJSON(`${BASE}/${T.ele}/dados/br/br-c0001-e${pad(T.ele, 6)}-u.json`)); } catch (e) { log('aviso brasil:', e.message); }
-
-  // totalização oficial por UF (o Brasil todo cabe em 27 arquivos)
-  const ufsAnt = (ufsAnteriores[n] ||= {});
-  const ufs = {};
-  await emParalelo(UFS, CONCORRENCIA, async uf => {
-    const u = uf.toLowerCase();
-    ufs[uf] = ufsAnt[uf] = oficialDe(await getJSON(`${BASE}/${T.ele}/dados/${u}/${u}-c0001-e${pad(T.ele, 6)}-u.json`));
-  });
-  for (const uf of UFS) if (!ufs[uf] && ufsAnt[uf]) ufs[uf] = ufsAnt[uf];
-
   const cs = await getJSON(`${BASE}/arquivo-urna/${T.pleito}/config/zz/zz-p${pad(T.pleito, 6)}-cs.json`);
-  const zz = cs.abr ? cs.abr.find(a => a.cd === 'zz') : cs;
+  const zz = cs.abr ? cs.abr.find(a => a.cd === "zz") : cs;
   const cidades = {};
   const fila = [];
   for (const mu of zz.mu) {
-    const c = cidades[mu.cd] = { nome: mu.nm, secoes: [], bu: {}, of: null };
+    const c = cidades[mu.cd] = { nome: mu.nm, secoes: [], bu: {}, of: e.cidades[mu.cd]?.of || null };
     for (const z of mu.zon) for (const s of z.sec) {
       if (s.nsp) continue;
       const quando = s.da ? `${s.da} ${s.ha}` : null;
@@ -131,25 +149,21 @@ async function sincronizarTurno(n) {
       else fila.push({ mun: mu.cd, zona: z.cd, ns: s.ns, quando, chave, c });
     }
   }
-
-  const publicar = () => gravarJSON(path.join(DIR_DADOS, `turno-${n}.json`), {
-    gerado: new Date().toISOString(), turno: n, ele: T.ele, pleito: T.pleito,
-    candidatos, ofExterior, brasil, ufs, cidades,
-  });
-  publicar();
-  // durante a primeira carga (centenas de BUs), publica parciais para o painel ir se populando
-  const parcial = setInterval(() => {
-    try { publicar(); gravarJSON(path.join(DIR_DADOS, `cache-bu-${T.pleito}.json`), cache); log(`turno ${n}: parcial ${feitos}/${fila.length} BUs novos`); }
-    catch (e) { log("aviso parcial:", e.message); }
-  }, 20000);
+  e.cidades = cidades;
+  publicar(n);
+  // durante cargas grandes (centenas de BUs), publica parciais para o painel ir se populando
   let feitos = 0;
+  const parcial = setInterval(() => {
+    try { publicar(n); gravarJSON(path.join(DIR_DADOS, `cache-bu-${T.pleito}.json`), cache); log(`turno ${n}: parcial ${feitos}/${fila.length} BUs novos`); }
+    catch (er) { log("aviso parcial:", er.message); }
+  }, 20000);
   const errosBU = await emParalelo(fila, CONCORRENCIA, async it => {
     const dir = `${BASE}/arquivo-urna/${T.pleito}/dados/zz/${it.mun}/${it.zona}/${it.ns}`;
     const aux = await getJSON(`${dir}/p${pad(T.pleito, 6)}-zz-m${it.mun}-z${it.zona}-s${it.ns}-aux.json`);
-    const hashes = (aux.hashes || []).filter(h => (h.arq || []).some(a => a.tp === 'bu') && !/exclu|cancel/i.test(h.st || ''));
+    const hashes = (aux.hashes || []).filter(h => (h.arq || []).some(a => a.tp === "bu") && !/exclu|cancel/i.test(h.st || ""));
     const h = hashes[hashes.length - 1];
     if (!h) { cache[it.chave] = { q: it.quando, r: null }; return; }
-    const nm = h.arq.find(a => a.tp === 'bu').nm;
+    const nm = h.arq.find(a => a.tp === "bu").nm;
     const buf = await (await baixar(`${dir}/${h.hash}/${nm}`)).arrayBuffer();
     const r = BU.decodificar(buf, T.ele, 1);
     cache[it.chave] = { q: it.quando, r };
@@ -160,20 +174,16 @@ async function sincronizarTurno(n) {
 
   // totalização oficial por cidade: só depois que o TSE começar a divulgar o exterior
   let errosOf = 0;
-  const ultimoOf = (oficiaisAnteriores[n] ||= {});
-  if (ofExterior.secRec > 0) {
+  if (e.ofExterior && e.ofExterior.secRec > 0) {
     errosOf = await emParalelo(Object.keys(cidades), CONCORRENCIA, async mun => {
       cidades[mun].of = oficialDe(await getJSON(`${BASE}/${T.ele}/dados/zz/zz${mun}-c0001-e${pad(T.ele, 6)}-u.json`));
-      ultimoOf[mun] = cidades[mun].of;
     });
-    for (const mun in cidades) if (!cidades[mun].of && ultimoOf[mun]) cidades[mun].of = ultimoOf[mun]; // falhou agora: mantém o anterior
   }
-
+  publicar(n);
   const nBU = Object.values(cidades).reduce((a, c) => a + Object.keys(c.bu).length, 0);
   const nSec = Object.values(cidades).reduce((a, c) => a + c.secoes.length, 0);
-  publicar();
-  log(`turno ${n}: ${nBU}/${nSec} seções com BU (${fila.length} novos, ${errosBU} falhas), oficial ${ofExterior.secRec}/${ofExterior.secTot}` +
-    (errosOf ? `, ${errosOf} falhas oficiais` : '') + ` em ${((Date.now() - inicio) / 1000).toFixed(1)}s`);
+  log(`turno ${n}: exterior ${nBU}/${nSec} seções com BU (${fila.length} novos, ${errosBU} falhas), oficial ${e.ofExterior?.secRec ?? 0}/${e.ofExterior?.secTot ?? 0}` +
+    (errosOf ? `, ${errosOf} falhas oficiais` : "") + ` em ${((Date.now() - inicio) / 1000).toFixed(1)}s`);
 }
 
 // ---------------------------------------------------------------- municípios do Brasil
@@ -225,15 +235,15 @@ async function loopMunicipios(n, pausaMin) {
   }
 }
 
-function agendar(n, minutos) {
+function agendar(n, minutos, fn, nome) {
   let rodando = false, retentativa = null;
   const rodar = async () => {
     if (rodando) return;
     rodando = true;
     clearTimeout(retentativa);
-    try { await sincronizarTurno(n); }
+    try { await fn(n); }
     catch (e) {
-      log(`erro turno ${n}: ${e.message} (nova tentativa em 1 min)`);
+      log(`erro ${nome} turno ${n}: ${e.message} (nova tentativa em 1 min)`);
       retentativa = setTimeout(rodar, 60 * 1000);
     }
     finally { rodando = false; }
@@ -246,12 +256,13 @@ function iniciar() {
   fs.mkdirSync(DIR_DADOS, { recursive: true });
   const min = +process.env.SYNC_INTERVALO_MIN || 5;
   const turnos = (process.env.TURNOS || '2,1').split(',').map(s => s.trim()).filter(t => TURNOS[t]);
-  for (const t of turnos) agendar(t, t === '1' ? Math.max(min, 60) : min); // 1º turno já está encerrado
+  for (const t of turnos) { const m = t === '1' ? Math.max(min, 60) : min; estadoDo(t); agendar(t, m, sincronizarNacional, 'Brasil'); agendar(t, m, sincronizarExterior, 'exterior'); }; // 1º turno já está encerrado
   // municípios: o 1º turno já acabou, então depois da primeira carga só confere a cada 60 min
   for (const t of (process.env.TURNOS_MUN || '2,1').split(',').map(s => s.trim()).filter(t => TURNOS[t])) loopMunicipios(t, t === '1' ? 60 : 1);
   log(`sincronização ativa: turnos ${turnos.join(', ')} a cada ${min} min (1º turno a cada ${Math.max(min, 60)} min)`);
 }
 
+const sincronizarTurno = async n => { await sincronizarNacional(n); await sincronizarExterior(n); };
 module.exports = { iniciar, sincronizarTurno };
 if (require.main === module) {
   if (process.argv[2] === '--uma-vez') {

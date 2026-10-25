@@ -41,8 +41,7 @@ const chaveLocal = l => l.mun ? `${l.uf}-${l.mun}` : l.uf;
 const mapa = L.map('mapaHist', { zoomControl: false, zoomSnap: 0.25, attributionControl: true }).setView([-14, -52], 4);
 mapa.attributionControl.setPrefix(false).addAttribution('Mapas: IBGE · Dados: TSE');
 let camadaUFs = null, camadaMun = null;
-const geoMun = {};
-const prontoUFs = fetch('geo/ufs.json').then(r => r.json()).then(g => {
+const prontoUFs = carregarGeo('ufs').then(g => {
   camadaUFs = L.geoJSON(g, {
     onEachFeature: (f, layer) => layer.on('click', () => {
       if (!cargo) return;
@@ -86,7 +85,7 @@ async function renderMapa() {
   const unicoMun = cargo.locais.length === 1 && cargo.locais[0].mun ? cargo.locais[0] : (sel && sel.mun ? sel : null);
   if (unicoMun) {
     const uf = unicoMun.uf;
-    const g = geoMun[uf] ||= await (await fetch(`geo/mun-${uf}.json`)).json();
+    const g = await carregarGeo(`mun-${uf}`);
     const ibge = MUNICIPIOS[unicoMun.mun]?.[2];
     const v = vencedor(unicoMun);
     camadaMun = L.geoJSON({ ...g, features: g.features.filter(f => f.properties.ibge === ibge) }, {
