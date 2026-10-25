@@ -60,6 +60,7 @@ let candSet = new Set();
 let cidades = new Map();      // exterior: mun -> {cd, nome, iso, cont, lat, lon, secoes:[], bu:{}, of:null}
 let ufs = {};                 // UF -> totalização oficial
 let munDados = {};            // UF -> {codTSE -> totalização oficial}
+let munDados1 = {};           // idem, do 1º turno (referência na dica do município durante o 2º turno)
 let ofExterior = null, brasil = null;
 let cacheBU = {};
 let sel = { tipo: 'total' };
@@ -242,6 +243,11 @@ async function carregarMunicipiosUF(uf) {
   if (modoServidor) {
     const r = await fetch(`dados/turno-${cfg.turno}-mun-${uf}.json`, { cache: 'no-cache' });
     if (r.ok) munDados[uf] = (await r.json()).municipios;
+    // no 2º turno, o 1º turno de cada município serve de referência na dica do mapa
+    if (cfg.turno === '2' && !munDados1[uf]) {
+      const r1 = await fetch(`dados/turno-1-mun-${uf}.json`, { cache: 'no-cache' }).catch(() => null);
+      if (r1 && r1.ok) munDados1[uf] = (await r1.json()).municipios;
+    }
     return;
   }
   const u = uf.toLowerCase();
@@ -518,6 +524,10 @@ function estilizarUF(layer) {
     // com a UF aberta, os municípios aparecem por baixo: a UF fica só com a borda
     fillOpacity: foco === uf ? 0 : (c ? c.op : 0.35) * (naSel ? 1 : 0.35),
   });
+  // a UF aberta fica por cima só como contorno: o mouse passa para os municípios embaixo dela
+  const el = layer.getElement();
+  if (el) el.style.pointerEvents = foco === uf ? 'none' : '';
+  if (foco === uf) layer.closeTooltip();
 }
 
 function estilizarMun(layer) {
@@ -559,7 +569,7 @@ function renderMapa() {
       if (!cd) return;
       const d = dadosMun(cd);
       l.unbindTooltip();
-      l.bindTooltip(tooltipHTML(esc(MUNICIPIOS[cd][1]), d, resumo(d)), { sticky: true, className: 'tip' });
+      l.bindTooltip(tooltipMunicipio(cd, d, resumo(d)), { sticky: true, className: 'tip' });
     });
   }
 
@@ -616,6 +626,28 @@ function renderMapa() {
       it.m.bindTooltip(tooltipHTML(bandeira(it.c.iso) + esc(it.c.nome), it.d, it.r), { className: 'tip' });
     }
   }
+}
+
+// dica do município: resultado do 2º turno (ou "ainda sem apuração") e o 1º turno como referência
+function tooltipMunicipio(cd, d, r) {
+  const [uf, nome, , capital] = MUNICIPIOS[cd];
+  let h = `<div class="tip-titulo">${esc(nome)} <small>${uf}${capital ? ' · capital' : ''}</small></div>`;
+  if (r.validos) {
+    for (const c of r.lista.slice(0, 4)) {
+      h += `<div class="tip-linha"><i style="background:${c.cor}"></i>${esc(c.nome)} <b>${pct(c.pct)}</b> <small>${fmt(c.votos)}</small></div>`;
+    }
+    h += `<div class="tip-sem">${fmt(d.comp)} votantes · ${fmt(d.secRec)}/${fmt(d.secTot)} seções (${pct(r.pctSec)})</div>`;
+  } else {
+    h += `<div class="tip-sem">Ainda sem apuração${d.secTot ? ` · 0/${fmt(d.secTot)} seções` : ''}</div>`;
+  }
+  const ref = cfg.turno === '2' ? munDados1[uf]?.[cd] : null;
+  if (ref) {
+    const v = ref.votos, tot = Object.values(v).reduce((a, b) => a + b, 0);
+    if (tot) {
+      h += '<div class="tip-ref">No 1º turno: ' + cands.map(c => `<span style="color:${c.cor}">${esc(c.nome)} ${pct(100 * (v[c.n] || 0) / tot)}</span>`).join(' · ') + '</div>';
+    }
+  }
+  return h;
 }
 
 function tooltipHTML(titulo, d, r) {
@@ -1112,7 +1144,7 @@ function ligarFiltros() {
 function trocarTurno() {
   geracao++;
   T = TURNOS[cfg.turno];
-  cands = []; candSet = new Set(); ofExterior = null; brasil = null; ufs = {}; munDados = {};
+  cands = []; candSet = new Set(); ofExterior = null; brasil = null; ufs = {}; munDados = {}; munDados1 = {};
   assinaturaAnterior = null;
   for (const k in versaoMun) delete versaoMun[k];
   iniciarCidades();

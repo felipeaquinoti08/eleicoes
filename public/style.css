@@ -280,3 +280,6 @@ body.vertical #centro { grid-template-rows: 1fr 24%; }
   .leaflet-tooltip.rotulo-uf { font-size: 30px; }
   .leaflet-tooltip.rotulo { font-size: 24px; }
 }
+
+.tip-ref { margin-top: 5px; padding-top: 4px; border-top: 1px solid var(--borda); font-size: 12px; color: var(--suave); }
+.tip-titulo small { color: var(--suave); font-weight: 400; font-size: 12px; }
