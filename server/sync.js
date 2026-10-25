@@ -13,22 +13,32 @@ const TURNOS = {
 };
 const UFS = ["AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG","MS","MT","PA","PB","PE","PI","PR","RJ","RN","RO","RR","RS","SC","SE","SP","TO"];
 const DIR_DADOS = process.env.DIR_DADOS || path.join(__dirname, '..', 'dados');
-const CONCORRENCIA = +process.env.CONCORRENCIA || 6;
+const CONCORRENCIA = +process.env.CONCORRENCIA || 4;
 
 const pad = (v, n) => String(v).padStart(n, '0');
 const espera = ms => new Promise(r => setTimeout(r, ms));
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
-async function baixar(url, tentativas = +process.env.TENTATIVAS || 12) {
+// Freio global: quando o TSE responde 429, todas as requisições esperam juntas (em vez de cada uma
+// insistir sozinha), e a espera cresce enquanto os 429 continuam. Um IP que insiste demais fica bloqueado.
+let pausaAte = 0, seguidos429 = 0;
+async function baixar(url, tentativas = +process.env.TENTATIVAS || 15) {
   for (let i = 0; ; i++) {
+    const falta = pausaAte - Date.now();
+    if (falta > 0) await espera(falta + Math.random() * 500);
     let r = null;
-    try { r = await fetch(url, { headers: { 'User-Agent': 'apuracao-exterior/1.0' } }); } catch (e) { if (i >= tentativas - 1) throw e; }
-    if (r && r.ok) return r;
+    try { r = await fetch(url, { headers: { 'User-Agent': 'apuracao-eleicoes/1.0' } }); } catch (e) { if (i >= tentativas - 1) throw e; }
+    if (r && r.ok) { seguidos429 = Math.max(0, seguidos429 - 1); return r; }
     if (r && r.status !== 429 && r.status < 500) throw Object.assign(new Error(r.status + ' ' + url), { status: r.status });
+    if (r && r.status === 429) {
+      seguidos429++;
+      pausaAte = Math.max(pausaAte, Date.now() + Math.min(60000, 1000 * 1.5 ** Math.min(seguidos429, 12)));
+    }
     if (i >= tentativas - 1) throw new Error((r ? r.status : 'rede') + ' ' + url);
     await espera(Math.min(20000, 1000 * 1.6 ** i) + Math.random() * 1000);
   }
 }
+const statusFreio = () => ({ pausaAteTSE: pausaAte > Date.now() ? new Date(pausaAte).toISOString() : null, respostas429Seguidas: seguidos429 });
 const getJSON = async url => (await baixar(url)).json();
 
 async function emParalelo(itens, limite, fn) {
@@ -111,9 +121,18 @@ const fotosEmAndamento = {};
 async function sincronizarNacional(n) {
   const T = TURNOS[n], e = estadoDo(n);
   const inicio = Date.now();
-  const zzJ = await getJSON(`${BASE}/${T.ele}/dados/zz/zz-c0001-e${pad(T.ele, 6)}-u.json`);
-  e.candidatos = candidatosDe(zzJ).sort((a, b) => a.n - b.n);
-  e.ofExterior = oficialDe(zzJ);
+  // cada arquivo falha sozinho: com 429 no total do exterior, as UFs ainda são buscadas
+  try {
+    const zzJ = await getJSON(`${BASE}/${T.ele}/dados/zz/zz-c0001-e${pad(T.ele, 6)}-u.json`);
+    e.candidatos = candidatosDe(zzJ).sort((a, b) => a.n - b.n);
+    e.ofExterior = oficialDe(zzJ);
+  } catch (er) {
+    log('aviso exterior oficial:', er.message);
+    if (!e.candidatos.length) { // sem candidatos ainda: tenta tirá-los do total do país
+      const brJ = await getJSON(`${BASE}/${T.ele}/dados/br/br-c0001-e${pad(T.ele, 6)}-u.json`);
+      e.candidatos = candidatosDe(brJ).sort((a, b) => a.n - b.n);
+    }
+  }
   if (!fotosEmAndamento[n]) { // em paralelo: as fotos não seguram o resultado
     fotosEmAndamento[n] = baixarFotos(n, T, e.candidatos).finally(() => { fotosEmAndamento[n] = null; });
   }
@@ -281,7 +300,7 @@ async function loopMunicipios(n, pausaMin) {
 // estado de cada coleta, exposto em /saude
 const STATUS = {};
 function marcar(n, nome, dados) { const t = (STATUS["turno" + n] ||= {}); t[nome] = { ...(t[nome] || {}), ...dados }; }
-function status() { return STATUS; }
+function status() { return { ...STATUS, freioTSE: statusFreio() }; }
 
 function agendar(n, minutos, fn, nome) {
   let rodando = false, retentativa = null;

@@ -192,7 +192,7 @@ async function sincronizarHistorico() {
 
 function iniciarHistorico() {
   const rodar = () => sincronizarHistorico().catch(e => log('erro:', e.message));
-  setTimeout(rodar, 30 * 1000); // começa depois que a apuração ao vivo já fez a primeira passada
+  setTimeout(rodar, 5 * 60 * 1000); // começa depois que a apuração ao vivo já fez as primeiras passadas
   setInterval(rodar, 6 * 60 * 60 * 1000); // completa o que faltou a cada 6 h
 }
 

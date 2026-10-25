@@ -94,7 +94,7 @@ docker inspect --format "{{.State.Health.Status}}" apuracao-eleicoes   # healthy
 | `TURNOS` | `2,1` | Turnos sincronizados (o 1º turno, já encerrado, a cada 60 min) |
 | `TURNOS_MUN` | `2,1` | Turnos com resultado por município |
 | `CACHE_DADOS_S` | `30` | `max-age`/`s-maxage` dos snapshots |
-| `CONCORRENCIA` | `6` | Downloads simultâneos ao TSE |
+| `CONCORRENCIA` | `4` | Downloads simultâneos ao TSE. Se o `/saude` mostrar muitos 429, baixe para 2 |
 | `PORTA` | `8080` | Porta do servidor dentro do container |
 | `HISTORICO` | `1` | `0` desliga o download do histórico |
 | `HISTORICO_QTD` | `20` | Quantas eleições entram no histórico |
@@ -156,6 +156,10 @@ Caminho: visitante → Cloudflare → Nginx Proxy Manager → container.
 Para conferir, rode duas vezes `curl -sI https://SEU-DOMINIO/dados/turno-2.json | grep -i cf-cache-status`: deve dar `MISS` e depois `HIT`. Se aparecer `DYNAMIC`, a regra não está valendo.
 
 É preciso porque o Cloudflare não faz cache de `.json` por padrão. O app manda `Cache-Control: max-age=30` nos snapshots, então cada ponto de presença do Cloudflare busca os resultados no NPM no máximo duas vezes por minuto, não importa quantas pessoas estejam assistindo. `/saude` responde com `no-store` e nunca fica em cache.
+
+**Ajuste obrigatório: Browser Cache TTL.** Em *Caching → Configuration → Browser Cache TTL*, escolha **Respect Existing Headers** (*Respeitar cabeçalhos existentes*). O padrão do Cloudflare (4 horas) sobrescreve o `Cache-Control` do app e faz o navegador guardar arquivos velhos por horas. Para conferir, rode `curl -sI https://SEU-DOMINIO/app.js | grep -i cache-control`: deve mostrar `max-age=300`, e não `max-age=14400`.
+
+**Depois de atualizar o app**: o HTML sai sem cache e com `?v=<versão>` em cada `.js`/`.css`, então o navegador sempre pega a versão nova. Se uma atualização antiga ficou presa no cache, faça uma vez *Caching → Configuration → Purge Everything*.
 
 ## Rodar na sua máquina, sem Docker (Windows)
 

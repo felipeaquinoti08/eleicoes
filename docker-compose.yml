@@ -10,7 +10,7 @@ services:
       TURNOS: "2,1"             # turnos sincronizados (o 1º turno só a cada 60 min)
       TURNOS_MUN: "2,1"         # turnos com resultado por município
       CACHE_DADOS_S: "30"       # cache dos snapshots no Cloudflare/navegador (segundos)
-      CONCORRENCIA: "6"         # downloads simultâneos ao TSE
+      CONCORRENCIA: "4"         # downloads simultâneos ao TSE (menos = menos risco de bloqueio 429)
     volumes:
       - dados:/app/dados
     # sem porta publicada no host: só o Nginx Proxy Manager, na mesma rede, acessa o container
