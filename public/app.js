@@ -813,7 +813,12 @@ function render() {
   $('pctSecoes').textContent = pct(rTot.pctSec, 2);
   $('barraSecoes').style.width = rTot.pctSec + '%';
   const hora = ultimaAtualizacao ? ultimaAtualizacao.toLocaleTimeString('pt-BR') : '–';
-  $('ultimaAtual').textContent = `${fmt(dTot.secRec)} de ${fmt(dTot.secTot)} seções · atualizado ${hora}` + (pendentesBU > 0 ? ` · baixando ${fmt(pendentesBU)} BUs` : '');
+  // horário em que o TSE gerou o último dado: deixa claro quando a demora é do TSE e não do painel
+  const tse = horaTSE();
+  const parado = tse && cfg.turno === '2' && Date.now() - tse.data > 15 * 60 * 1000;
+  $('ultimaAtual').innerHTML = `${fmt(dTot.secRec)} de ${fmt(dTot.secTot)} seções · atualizado ${hora}` +
+    (tse ? ` · <span class="${parado ? 'tse-parado' : ''}" title="Horário em que o TSE gerou o último dado publicado">${parado ? '⚠ TSE sem novos dados desde ' : 'dado do TSE das '}${tse.texto}</span>` : '') +
+    (pendentesBU > 0 ? ` · baixando ${fmt(pendentesBU)} BUs` : '');
 
   trilha();
   renderChips();
@@ -825,6 +830,15 @@ function render() {
   renderLegenda();
   $('selo').innerHTML = sel.tipo === 'total' ? '' :
     `<div>${iconeSel(sel)} ${esc(nomeSel(sel))}</div>` + (r.validos ? `<small>${fmt(d.comp)} votantes · ${pct(r.pctSec)} das seções</small>` : '<small>sem votos apurados</small>');
+}
+
+// "25/10/2026 17:06:31" (horário de Brasília) do total oficial do país -> { data, texto }
+function horaTSE() {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})/.exec(brasil?.hora || '');
+  if (!m) return null;
+  const data = new Date(`${m[3]}-${m[2]}-${m[1]}T${m[4]}:${m[5]}:00-03:00`);
+  const hoje = new Date().toISOString().slice(0, 10) === `${m[3]}-${m[2]}-${m[1]}`;
+  return { data, texto: hoje ? `${m[4]}:${m[5]}` : `${m[1]}/${m[2]} ${m[4]}:${m[5]}` };
 }
 
 function foto(c) { return modoServidor ? `dados/fotos/${c.sq}.jpeg` : `${BASE}/${T.ele}/fotos/br/${c.sq}.jpeg`; }

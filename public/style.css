@@ -322,3 +322,5 @@ body.vertical .acoes { position: absolute; right: 12px; top: 8px; }
 }
 
 .selo-uf.selo-zz { background: #38bdf8; }
+
+.tse-parado { color: #fbbf24; font-weight: 700; }
