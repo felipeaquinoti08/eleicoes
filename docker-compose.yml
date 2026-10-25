@@ -1,0 +1,31 @@
+services:
+  painel:
+    build: .
+    image: apuracao-exterior:latest
+    container_name: apuracao-exterior
+    restart: unless-stopped
+    environment:
+      SYNC_INTERVALO_MIN: "5"   # de quantos em quantos minutos baixar do TSE
+      TURNOS: "2,1"             # turnos sincronizados (o 1º turno só a cada 60 min)
+      CACHE_DADOS_S: "30"       # cache dos snapshots no Cloudflare/navegador (segundos)
+      CONCORRENCIA: "6"         # downloads simultâneos ao TSE
+    volumes:
+      - dados:/app/dados
+    ports:
+      - "8080:8080"             # remova se for expor só pelo Cloudflare Tunnel
+
+  # Opcional: Cloudflare Tunnel (não precisa abrir porta no servidor).
+  # Crie o túnel no painel Zero Trust apontando para http://painel:8080 e
+  # rode com:  TUNNEL_TOKEN=xxxx docker compose --profile tunel up -d
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunel"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+    depends_on:
+      - painel
+
+volumes:
+  dados:

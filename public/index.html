@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Apuração de Eleições</title>
+  <link rel="stylesheet" href="lib/leaflet.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header id="topo">
+    <div class="titulo">
+      <div class="linha1"><span class="ao-vivo"><i></i>AO VIVO</span><h1>APURAÇÃO DE ELEIÇÕES</h1></div>
+      <div class="sub" id="subtitulo">Urnas no exterior · Presidente · Eleições 2026</div>
+    </div>
+    <div class="progresso">
+      <div class="progresso-txt"><span id="pctSecoes">–</span> <small>seções apuradas</small></div>
+      <div class="barra"><div id="barraSecoes"></div></div>
+      <small id="ultimaAtual">carregando…</small>
+    </div>
+  </header>
+
+  <nav id="trilha"></nav>
+  <section id="placar"></section>
+  <div id="estatisticas"></div>
+
+  <main id="centro">
+    <div id="mapaWrap">
+      <div id="mapa"></div>
+      <div id="continentes"></div>
+      <div id="selo"></div>
+      <div id="legenda"></div>
+    </div>
+    <aside id="ranking">
+      <div class="ranking-topo">
+        <h2 id="rankingTitulo">Países</h2>
+        <div id="abas"></div>
+      </div>
+      <ol id="rankingLista"></ol>
+    </aside>
+  </main>
+
+  <footer id="ticker"><div id="tickerTrilho"></div></footer>
+</div>
+
+<button id="btnFiltros" title="Filtros (F)">⚙</button>
+
+<div id="painel" class="oculto">
+  <div class="painel-topo"><h3>Filtros e exibição</h3><button id="fecharPainel">✕</button></div>
+  <label>Turno
+    <select id="fTurno"><option value="2">2º turno (25/10)</option><option value="1">1º turno (04/10)</option></select>
+  </label>
+  <label>Fonte dos dados
+    <select id="fFonte">
+      <option value="auto">Automático (o que tiver mais seções)</option>
+      <option value="bu">Boletins de urna (seção a seção, tempo real)</option>
+      <option value="oficial">Totalização oficial do TSE</option>
+    </select>
+  </label>
+  <label>Continente
+    <select id="fContinente"></select>
+  </label>
+  <label>País
+    <select id="fPais"></select>
+  </label>
+  <label>Buscar cidade
+    <input id="fBusca" list="listaCidades" placeholder="ex.: Lisboa, Miami…">
+    <datalist id="listaCidades"></datalist>
+  </label>
+  <label>Cor do mapa
+    <select id="fDestaque"></select>
+  </label>
+  <label>Ordenar ranking por
+    <select id="fOrdem"></select>
+  </label>
+  <label class="check"><input type="checkbox" id="fSoComVotos"> Só locais com votos apurados</label>
+  <label class="check"><input type="checkbox" id="fCidades"> Mostrar cidades no mapa</label>
+  <label class="check"><input type="checkbox" id="fRotulos"> Rótulos no mapa</label>
+  <label class="check"><input type="checkbox" id="fBrasil"> Comparar com o Brasil (oficial)</label>
+  <hr>
+  <label class="check"><input type="checkbox" id="fVertical"> Layout vertical 9:16 (TikTok)</label>
+  <label class="check"><input type="checkbox" id="fTour"> Tour automático pelos países</label>
+  <label>Tempo por país no tour
+    <select id="fTourSeg"><option value="6">6 s</option><option value="8">8 s</option><option value="12">12 s</option><option value="20">20 s</option></select>
+  </label>
+  <label>Atualização automática
+    <select id="fIntervalo"><option value="30">a cada 30 s</option><option value="60">a cada 1 min</option><option value="120">a cada 2 min</option><option value="0">desligada</option></select>
+  </label>
+  <div class="botoes">
+    <button id="btnAtualizar">Atualizar agora</button>
+    <button id="btnCache">Limpar cache</button>
+  </div>
+  <p class="dica">Atalhos: <b>F</b> filtros · <b>T</b> tour · <b>V</b> vertical · <b>R</b> atualizar · <b>Esc</b> voltar ao mundo.<br>
+  Clique em um país ou cidade no mapa (ou no ranking) para ver os votos daquela seleção.</p>
+  <p class="dica" id="statusCarga"></p>
+</div>
+
+<script src="lib/leaflet.js"></script>
+<script src="cidades.js"></script>
+<script src="mundo-geo.js"></script>
+<script src="paises-geo.js"></script>
+<script src="bu.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
