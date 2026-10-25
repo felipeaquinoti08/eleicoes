@@ -283,3 +283,40 @@ body.vertical #centro { grid-template-rows: 1fr 24%; }
 
 .tip-ref { margin-top: 5px; padding-top: 4px; border-top: 1px solid var(--borda); font-size: 12px; color: var(--suave); }
 .tip-titulo small { color: var(--suave); font-weight: 400; font-size: 12px; }
+
+/* ---------- ações no cabeçalho (antes flutuavam sobre o mapa) ---------- */
+.acoes { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+#btnFiltros, #btnSom {
+  position: static; top: auto; bottom: auto; right: auto; width: auto; height: 32px; border-radius: 8px;
+  opacity: 1; padding: 0 10px; font-size: 14px; background: var(--painel2); border: 1px solid var(--borda);
+}
+#btnFiltros:hover, #btnSom:hover { background: #22305a; }
+#btnSom.pendente { animation: pulso 1.2s infinite; box-shadow: 0 0 0 2px var(--destaque); }
+.online { font-size: 13px; color: #4ade80; border: 1px solid #16a34a66; background: #16a34a1a; border-radius: 8px; padding: 4px 9px; font-variant-numeric: tabular-nums; }
+.online.oculto { display: none; }
+#topo .progresso { margin-left: auto; }
+/* live e TV: ações escondidas (atalhos de teclado continuam), aparecem ao passar o mouse no cabeçalho */
+body.modo-live .acoes, body.modo-tv .acoes { opacity: 0; transition: opacity .2s; }
+body.modo-live #topo:hover .acoes, body.modo-tv #topo:hover .acoes, body.modo-live .acoes:focus-within, body.modo-tv .acoes:focus-within { opacity: 1; }
+body.modo-live .acoes .online, body.modo-tv .acoes .online { display: none; }
+body.vertical #topo { flex-wrap: wrap; }
+body.vertical .acoes { position: absolute; right: 12px; top: 8px; }
+#topo { position: relative; }
+
+/* ---------- aviso de novos dados com origem e resultado ---------- */
+#novosDados { font-size: 15px; font-weight: 600; padding: 10px 16px; border-radius: 16px; min-width: 320px; max-width: min(92vw, 720px); background: #0b1020f2; color: var(--texto); border: 2px solid var(--destaque); }
+#novosDados .nd-titulo { color: var(--destaque); font-weight: 900; font-size: 18px; text-align: center; margin-bottom: 4px; }
+.nd-linha { display: grid; grid-template-columns: minmax(110px, auto) auto 1fr auto; gap: 10px; align-items: center; padding: 3px 0; border-top: 1px solid var(--borda); font-size: 14px; }
+.nd-local { font-weight: 800; white-space: nowrap; }
+.nd-delta { color: var(--destaque); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.nd-placar em { font-style: normal; font-weight: 800; }
+.nd-linha small { color: var(--suave); white-space: nowrap; }
+.nd-mais { color: var(--suave); font-size: 12px; text-align: center; padding-top: 3px; }
+#novosDados.mostrar { animation: none; transform: translate(-50%, 0); transition: transform .35s ease; }
+#novosDados:not(.mostrar) { transition: transform .35s ease; }
+@media (max-width: 900px) {
+  .acoes { justify-content: flex-start; }
+  #topo .progresso { margin-left: 0; }
+  .nd-linha { grid-template-columns: 1fr auto; }
+  .nd-linha .nd-placar { grid-column: 1 / -1; }
+}

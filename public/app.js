@@ -324,16 +324,78 @@ function programarAtualizacao() {
 function status(msg) { $('statusCarga').textContent = msg; }
 
 // toca o bipe e pisca o aviso quando a apuração avançou desde a última atualização
+// Fotografia por local (UFs e países do exterior) para descobrir onde a apuração avançou entre duas atualizações.
+function fotografarLocais() {
+  const f = {};
+  for (const uf of UFS) f['uf:' + uf] = dadosUF(uf);
+  const porPais = {};
+  for (const c of cidades.values()) if (c.iso) (porPais[c.iso] ||= []).push(c);
+  for (const [iso, l] of Object.entries(porPais)) f['pais:' + iso] = agregar(l);
+  return f;
+}
+let fotoAnterior = null;
+let timerAviso = null;
+
 function avisarNovosDados() {
   if (!cands.length) return;
   const d = agregarSel({ tipo: 'total' });
   const assinatura = `${cfg.turno}|${d.secRec}|${d.comp}|${Object.values(d.votos).join(',')}`;
   const mudou = assinaturaAnterior !== null && assinatura !== assinaturaAnterior && d.comp > 0;
   assinaturaAnterior = assinatura;
+  const foto = fotografarLocais();
+  const antes = fotoAnterior;
+  fotoAnterior = foto;
   if (!mudou) return;
+
+  // locais que ganharam votos desde a última atualização, dos que mais cresceram para os que menos
+  const novos = [];
+  if (antes) {
+    for (const [k, agora] of Object.entries(foto)) {
+      const a = antes[k];
+      const delta = agora.comp - (a ? a.comp : 0);
+      if (delta > 0) novos.push({ k, delta, d: agora });
+    }
+    novos.sort((x, y) => y.delta - x.delta);
+  }
+  const linhas = novos.slice(0, 4).map(({ k, delta, d }) => {
+    const [tipo, id] = k.split(':');
+    const r = resumo(d);
+    const rotulo = tipo === 'uf' ? `${seloUF(id)}${esc(UF_NOMES[id])}` : `${bandeira(id)}${esc(PAISES[id]?.[0] || id)}`;
+    const placar = r.lista.slice(0, 2).map(c => `<em style="color:${c.cor}">${esc(c.nome)} ${pct(c.pct)}</em>`).join(' × ');
+    return `<div class="nd-linha"><span class="nd-local">${rotulo}</span><span class="nd-delta">+${fmt(delta)} votos</span><span class="nd-placar">${placar}</span><small>${pct(r.pctSec)} apurado</small></div>`;
+  });
+  if (novos.length > 4) linhas.push(`<div class="nd-mais">e mais ${novos.length - 4} ${novos.length - 4 === 1 ? 'local' : 'locais'}</div>`);
+  if (!linhas.length) { // sem a fotografia anterior (primeira atualização): mostra o total
+    const r = resumo(d);
+    linhas.push(`<div class="nd-linha"><span class="nd-local">Total</span><span class="nd-placar">${r.lista.slice(0, 2).map(c => `<em style="color:${c.cor}">${esc(c.nome)} ${pct(c.pct)}</em>`).join(' × ')}</span></div>`);
+  }
+  $('ndLista').innerHTML = linhas.join('');
   const el = $('novosDados');
   el.classList.remove('mostrar'); void el.offsetWidth; el.classList.add('mostrar');
+  clearTimeout(timerAviso);
+  timerAviso = setTimeout(() => el.classList.remove('mostrar'), 9000);
   if (cfg.som) Som.tocar();
+}
+
+// ---------------------------------------------------------------- visitantes online
+// id anônimo por navegador (não identifica a pessoa); só existe no modo servidor
+function iniciarPresenca() {
+  let id = localStorage.getItem('id-visitante');
+  if (!id || !/^[a-z0-9]{8,32}$/.test(id)) {
+    id = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()) + Date.now()).replace(/[^a-z0-9]/g, '').slice(0, 24);
+    localStorage.setItem('id-visitante', id);
+  }
+  const sinal = async () => {
+    if (!modoServidor) return;
+    try {
+      const r = await fetch(`presenca?c=${id}`, { cache: 'no-store' });
+      const { online } = await r.json();
+      $('online').classList.remove('oculto');
+      $('online').textContent = `👥 ${fmt(online)} online`;
+    } catch { /* sem contador */ }
+  };
+  setTimeout(sinal, 1500);
+  setInterval(sinal, 30000);
 }
 
 // ---------------------------------------------------------------- agregação
@@ -1145,7 +1207,7 @@ function trocarTurno() {
   geracao++;
   T = TURNOS[cfg.turno];
   cands = []; candSet = new Set(); ofExterior = null; brasil = null; ufs = {}; munDados = {}; munDados1 = {};
-  assinaturaAnterior = null;
+  assinaturaAnterior = null; fotoAnterior = null;
   for (const k in versaoMun) delete versaoMun[k];
   iniciarCidades();
   carregarCache();
@@ -1161,5 +1223,6 @@ montarFiltrosLocais();
 ligarFiltros();
 sincronizarFiltros();
 atualizarBotaoSom();
+iniciarPresenca();
 aplicarLayout();
 atualizar().then(() => { if (cfg.tour) iniciarTour(); });

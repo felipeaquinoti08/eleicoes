@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Saúde · Apuração de Eleições</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    html, body { overflow: auto; }
+    #saude { max-width: 1200px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+    .cab { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .cab h1 { font-size: 24px; }
+    .cab a { color: var(--texto); }
+    .geral { font-size: 18px; font-weight: 800; padding: 10px 16px; border-radius: 12px; }
+    .geral.ok { background: #16a34a33; color: #4ade80; border: 1px solid #16a34a; }
+    .geral.atencao { background: #f59e0b22; color: #fbbf24; border: 1px solid #f59e0b; }
+    .geral.erro { background: #dc262622; color: #f87171; border: 1px solid #dc2626; }
+    .grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+    .cartao { background: var(--painel); border: 1px solid var(--borda); border-radius: 12px; padding: 12px 14px; }
+    .cartao h3 { margin: 0 0 8px; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+    .cartao .grande { font-size: 30px; font-weight: 900; }
+    .bola { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .bola.ok { background: #22c55e; } .bola.atencao { background: #f59e0b; } .bola.erro { background: #ef4444; } .bola.rodando { background: #38bdf8; animation: pulso 1s infinite; }
+    dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; font-size: 13px; }
+    dt { color: var(--suave); } dd { margin: 0; font-variant-numeric: tabular-nums; }
+    .erro-txt { color: #f87171; font-size: 12px; word-break: break-all; margin-top: 6px; }
+    h2 { margin: 6px 0 0; font-size: 17px; }
+    .rodape { color: var(--suave); font-size: 12px; }
+  </style>
+</head>
+<body>
+<div id="saude">
+  <div class="cab">
+    <div><h1>Saúde da coleta</h1><div class="rodape">Apuração de Eleições · atualiza a cada 10 s · <a href="saude.json">ver JSON</a> · <a href="./">abrir o painel</a></div></div>
+    <div id="geral" class="geral">carregando…</div>
+  </div>
+  <div class="grade" id="cartoes"></div>
+  <div id="turnos"></div>
+  <div class="rodape" id="rodape"></div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const fmt = n => (n ?? 0).toLocaleString('pt-BR');
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function ha(iso) {
+  if (!iso) return '–';
+  const s = Math.round((Date.now() - new Date(iso)) / 1000);
+  const quando = new Date(iso).toLocaleTimeString('pt-BR');
+  if (s < 0) return `em ${Math.round(-s / 60)} min (${quando})`;
+  if (s < 60) return `há ${s} s (${quando})`;
+  if (s < 3600) return `há ${Math.round(s / 60)} min (${quando})`;
+  return `há ${(s / 3600).toFixed(1)} h (${new Date(iso).toLocaleString('pt-BR')})`;
+}
+const NOMES = { brasil: 'Brasil (total e UFs)', exterior: 'Exterior (boletins de urna)', municipios: 'Municípios', projecao: 'Projeção' };
+
+// estado de uma coleta: ok, atrasada (sem sucesso há mais de 2 intervalos), com erro ou rodando
+function estadoColeta(c) {
+  if (!c) return 'atencao';
+  const lim = (c.intervaloMin || 5) * 2 * 60 * 1000 + 60000;
+  if (c.ultimoSucesso && Date.now() - new Date(c.ultimoSucesso) < lim) return c.ok === false ? 'atencao' : 'ok';
+  if (c.rodando) return 'rodando';
+  return c.ok === false ? 'erro' : 'atencao';
+}
+
+function cartaoColeta(nome, c) {
+  const e = estadoColeta(c);
+  const linhas = [];
+  const add = (k, v) => { if (v !== undefined && v !== null) linhas.push(`<dt>${k}</dt><dd>${v}</dd>`); };
+  add('Último sucesso', ha(c.ultimoSucesso));
+  if (c.rodando) add('Agora', 'rodando…');
+  else add('Próxima', ha(c.proxima));
+  add('Duração', c.duracaoS != null ? c.duracaoS + ' s' : null);
+  if (c.secoesApuradas != null) add('Seções apuradas', `${fmt(c.secoesApuradas)} de ${fmt(c.secoesTotal)}`);
+  if (c.tseGeradoEm) add('TSE gerou o dado em', esc(c.tseGeradoEm));
+  if (c.ufsComFalha) add('UFs com falha', fmt(c.ufsComFalha));
+  if (c.secoesComBU != null) add('Seções com BU', `${fmt(c.secoesComBU)} de ${fmt(c.secoesTotal)}`);
+  if (c.buNovos != null) add('BUs novos / falhas', `${fmt(c.buNovos)} / ${fmt(c.buFalhas)}`);
+  if (c.oficialApuradas != null) add('Oficial do exterior', fmt(c.oficialApuradas) + ' seções');
+  if (c.municipiosComDados != null) add('Municípios com dados', fmt(c.municipiosComDados));
+  if (c.atualizadosNestaPassada != null) add('Atualizados na passada', fmt(c.atualizadosNestaPassada));
+  if (c.disponivel != null) add('Projeção disponível', c.disponivel ? 'sim' : 'ainda não');
+  if (c.pesoApurado != null) add('Eleitorado apurado', c.pesoApurado + '%');
+  return `<div class="cartao"><h3><span class="bola ${e}"></span>${NOMES[nome] || nome}</h3><dl>${linhas.join('')}</dl>` +
+    (c.erro ? `<div class="erro-txt">${esc(c.erro)}</div>` : '') + '</div>';
+}
+
+async function atualizar() {
+  let s;
+  try { s = await (await fetch('saude.json', { cache: 'no-store' })).json(); }
+  catch (e) { $('geral').className = 'geral erro'; $('geral').textContent = 'Servidor sem resposta'; return; }
+
+  const coletas = Object.entries(s.coletas || {}).filter(([k]) => k.startsWith('turno'));
+  const estados = coletas.flatMap(([, c]) => Object.values(c).map(estadoColeta));
+  const freio = s.coletas?.freioTSE || {};
+  let geral = 'ok', texto = 'Tudo funcionando';
+  if (estados.includes('erro')) { geral = 'erro'; texto = 'Coleta com erro'; }
+  else if (estados.includes('atencao') || freio.pausaAteTSE) { geral = 'atencao'; texto = freio.pausaAteTSE ? 'TSE limitando (429): coleta mais lenta' : 'Atenção'; }
+  $('geral').className = 'geral ' + geral;
+  $('geral').textContent = texto;
+
+  const snap = s.snapshots || {};
+  $("cartoes").innerHTML = `
+    <div class="cartao"><h3>👥 Online agora</h3><div class="grande">${fmt(s.visitantes?.online)}</div>
+      <dl><dt>Pico de hoje</dt><dd>${fmt(s.visitantes?.picoHoje)} ${s.visitantes?.picoEm ? '· ' + new Date(s.visitantes.picoEm).toLocaleTimeString('pt-BR') : ''}</dd></dl></div>
+    <div class="cartao"><h3><span class="bola ${freio.pausaAteTSE ? 'atencao' : 'ok'}"></span>Limite do TSE</h3>
+      <dl><dt>Respostas 429 seguidas</dt><dd>${fmt(freio.respostas429Seguidas)}</dd><dt>Pausa até</dt><dd>${freio.pausaAteTSE ? ha(freio.pausaAteTSE) : 'sem pausa'}</dd></dl></div>
+    <div class="cartao"><h3>📦 Dados publicados</h3>
+      <dl><dt>2º turno</dt><dd>${ha(snap.turno2)}</dd><dt>1º turno</dt><dd>${ha(snap.turno1)}</dd><dt>Histórico</dt><dd>${ha(s.historico)}</dd></dl></div>
+    <div class="cartao"><h3>🖥️ Servidor</h3>
+      <dl><dt>Versão</dt><dd>${esc(s.versao)}</dd><dt>No ar desde</dt><dd>${ha(s.iniciadoEm)}</dd></dl></div>`;
+
+  $('turnos').innerHTML = coletas.sort().reverse().map(([t, c]) =>
+    `<h2>${t === 'turno2' ? '2º turno' : '1º turno'}</h2><div class="grade">${Object.entries(c).map(([k, v]) => cartaoColeta(k, v)).join('')}</div>`).join('');
+  $('rodape').textContent = 'Verificado às ' + new Date(s.agora).toLocaleTimeString('pt-BR') + ' · horários das coletas no fuso do seu navegador';
+}
+atualizar();
+setInterval(atualizar, 10000);
+</script>
+</body>
+</html>

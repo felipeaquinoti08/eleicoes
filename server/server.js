@@ -70,6 +70,26 @@ function versionarHTML(html) {
     .replace('<head>', `<head>\n  <script>window.VERSAO_APP = '${VERSAO}';</script>`);
 }
 
+const INICIO = new Date().toISOString();
+
+// visitantes online: id anônimo por navegador -> último sinal
+const presenca = new Map();
+const JANELA_ONLINE_MS = 90 * 1000;
+const picoOnline = { valor: 0, em: null, dia: '' };
+let contagem = { em: 0, n: 0 };
+function contarOnline() {
+  if (Date.now() - contagem.em < 5000) return contagem.n; // recalcula no máximo a cada 5 s
+  const limite = Date.now() - JANELA_ONLINE_MS;
+  for (const [id, t] of presenca) if (t < limite) presenca.delete(id);
+  const n = presenca.size;
+  const hoje = new Date().toISOString().slice(0, 10);
+  if (picoOnline.dia !== hoje) Object.assign(picoOnline, { valor: 0, em: null, dia: hoje });
+  if (n > picoOnline.valor) Object.assign(picoOnline, { valor: n, em: new Date().toISOString() });
+  contagem = { em: Date.now(), n };
+  return n;
+}
+setInterval(contarOnline, 30 * 1000).unref();
+
 function resolver(urlPath) {
   const p = decodeURIComponent(urlPath.split('?')[0]);
   if (/^\/dados\/(turno-[12](-mun-[A-Z]{2})?|projecao-2)\.json$/.test(p)) return { arq: path.join(DIR_DADOS, path.basename(p)), dados: true };
@@ -86,7 +106,25 @@ const servidor = http.createServer((req, res) => {
   res.setHeader('Referrer-Policy', 'no-referrer');
   if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); return res.end(); }
 
-  if (req.url === '/saude') {
+  const caminhoUrl = req.url.split('?')[0];
+
+  // presença: cada aba aberta manda um sinal a cada 30 s; conta quem deu sinal recentemente
+  if (caminhoUrl === '/presenca') {
+    const id = new URL(req.url, 'http://x').searchParams.get('c') || '';
+    if (/^[a-z0-9]{8,32}$/.test(id) && (presenca.has(id) || presenca.size < 500000)) presenca.set(id, Date.now());
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify({ online: contarOnline() }));
+  }
+
+  // /saude: página legível no navegador; JSON para o app, o healthcheck e scripts (ou /saude.json)
+  if (caminhoUrl === '/saude' || caminhoUrl === '/saude.json') {
+    const querHTML = caminhoUrl === '/saude' && /text\/html/.test(req.headers.accept || '');
+    if (querHTML) {
+      return fs.readFile(path.join(DIR_PUBLIC, 'saude.html'), (err, html) => {
+        res.writeHead(err ? 500 : 200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(err ? 'erro' : versionarHTML(html.toString('utf8')));
+      });
+    }
     // ok continua true mesmo com coleta atrasada: o painel usa esse campo só para saber que há servidor
     const snapshots = {};
     for (const t of [1, 2]) {
@@ -94,8 +132,13 @@ const servidor = http.createServer((req, res) => {
     }
     let hist = null;
     try { hist = fs.statSync(path.join(DIR_DADOS, 'historico', 'indice.json')).mtime; } catch { /* ainda não baixou */ }
+    const online = contarOnline();
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-    return res.end(JSON.stringify({ ok: true, agora: new Date().toISOString(), snapshots, historico: hist, coletas: sync.status() }, null, 2));
+    return res.end(JSON.stringify({
+      ok: true, agora: new Date().toISOString(), versao: VERSAO, iniciadoEm: INICIO,
+      visitantes: { online, picoHoje: picoOnline.valor, picoEm: picoOnline.em },
+      snapshots, historico: hist, coletas: sync.status(),
+    }, null, 2));
   }
 
   const r = resolver(req.url);
