@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Histórico · Apuração de Eleições</title>
+  <link rel="stylesheet" href="lib/leaflet.css">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="historico.css">
+</head>
+<body>
+<div id="hist">
+  <header id="topo">
+    <div class="titulo">
+      <div class="linha1"><h1>APURAÇÃO DE ELEIÇÕES</h1><span class="tag-hist">HISTÓRICO</span></div>
+      <div class="sub" id="subtitulo">As últimas eleições com resultado publicado pelo TSE</div>
+    </div>
+    <a class="voltar-vivo" href="./">● Apuração ao vivo</a>
+  </header>
+
+  <aside id="listaEleicoes"></aside>
+
+  <section id="detalhe">
+    <div id="cabecalhoEleicao"></div>
+    <div id="cargos" class="abas-grandes"></div>
+    <div id="filtrosHist">
+      <label>Local <select id="hLocal"></select></label>
+      <label>Ver <select id="hModo"><option value="cand">Candidatos</option><option value="part">Partidos (votos nominais)</option></select></label>
+    </div>
+    <div id="corpoHist">
+      <div id="mapaHistWrap"><div id="mapaHist"></div><div id="legendaHist"></div></div>
+      <div id="resultadoHist"></div>
+    </div>
+  </section>
+</div>
+
+<script src="lib/leaflet.js"></script>
+<script src="municipios.js"></script>
+<script src="historico.js"></script>
+</body>
+</html>

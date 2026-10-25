@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const sync = require('./sync');
+const historico = require('./historico');
 
 const PORTA = +process.env.PORTA || 8080;
 const DIR_PUBLIC = path.join(__dirname, '..', 'public');
@@ -21,6 +22,7 @@ const TIPOS = {
 function resolver(urlPath) {
   const p = decodeURIComponent(urlPath.split('?')[0]);
   if (/^\/dados\/turno-[12](-mun-[A-Z]{2})?\.json$/.test(p)) return { arq: path.join(DIR_DADOS, path.basename(p)), dados: true };
+  if (/^\/dados\/historico\/[a-z0-9-]+\.json$/.test(p)) return { arq: path.join(DIR_DADOS, 'historico', path.basename(p)), dados: false };
   if (/^\/dados\/fotos\/\d+\.jpeg$/.test(p)) return { arq: path.join(DIR_DADOS, 'fotos', path.basename(p)), dados: false };
   const rel = p === '/' ? 'index.html' : p.slice(1);
   const arq = path.resolve(DIR_PUBLIC, rel);
@@ -66,5 +68,6 @@ const servidor = http.createServer((req, res) => {
 servidor.listen(PORTA, () => {
   console.log(`painel em http://0.0.0.0:${PORTA}/`);
   if (process.env.SYNC !== '0') sync.iniciar();
+  if (process.env.HISTORICO !== '0') historico.iniciarHistorico();
 });
 for (const s of ['SIGINT', 'SIGTERM']) process.on(s, () => servidor.close(() => process.exit(0)));

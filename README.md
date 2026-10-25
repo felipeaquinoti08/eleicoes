@@ -1,72 +1,122 @@
 # Apuração de Eleições
 
-Painel ao vivo com os votos para Presidente nas urnas do exterior: mapa-múndi clicável (país → cidade → seção), comparativo mundial, filtros e layout vertical 9:16 para transmitir no TikTok.
+Painel ao vivo da apuração das Eleições 2026 com dados públicos do TSE: Brasil (estado e município) e exterior (continente, país, cidade e seção) num mesmo mapa clicável, com filtros, sinal sonoro quando chegam dados novos e um layout vertical 9:16 para transmitir no TikTok.
 
-## Fontes de dados (públicas, do TSE)
+## O que tem
 
-| Fonte | O que é | Quando fica disponível |
+- **Mapa único, Brasil + exterior.** Clique num estado para ver os municípios dele, num país para ver as cidades, numa cidade do exterior para ver seção por seção. O placar, as estatísticas e o ranking mostram sempre a seleção atual.
+- **Navegação**: `Total › Brasil › Região › Estado › Município` e `Total › Exterior › Continente › País › Cidade › Seção`.
+- **Filtros**: turno, fonte dos dados do exterior, "ir para" (região, estado, continente, país), busca de município ou cidade, cor do mapa (quem lidera ou % de um candidato), ordenação do ranking, só locais com votos.
+- **Para transmitir**: layout vertical 9:16, tour automático (Total → Brasil → estados → exterior → países), letreiro com os resultados e rótulos no mapa.
+- **Sinal sonoro**: bipe no estilo da urna e um aviso "NOVOS DADOS" sempre que a apuração avança. O navegador só libera som depois de um clique na página, então o botão 🔊 pisca até isso acontecer.
+
+## Histórico (últimas 20 eleições)
+
+A página **📜 Histórico** (`/historico.html`) mostra as últimas 20 eleições com resultado publicado no sistema do TSE, de qualquer cargo:
+
+- Eleição Geral 2026, 1º turno: Presidente (Brasil, estados e exterior) e Governador, Senador, Deputado Federal, Estadual e Distrital por estado.
+- Eleições Municipais 2024, 1º e 2º turno: Prefeito e Vereador nas capitais.
+- As eleições suplementares mais recentes (prefeitos, vereadores e o governo de Roraima), lidas da configuração do próprio TSE, então a lista se atualiza sozinha.
+
+Para cada eleição: mapa do Brasil colorido pelo partido mais votado, filtro por cargo e por local, candidatos com a situação (eleito, 2º turno) e, nos cargos proporcionais, os 40 mais votados e todos os eleitos, além dos votos nominais por partido.
+
+O job `server/historico.js` baixa tudo uma vez (cerca de 1 minuto), guarda em `dados/historico/` e confere de novo a cada 6 horas.
+
+**Sobre 2022 e 2020**: o sistema de resultados do TSE (`resultados.tse.jus.br`) só publica hoje os ciclos 2024 e 2026; os arquivos de 2022 e 2020 respondem 404. Esses anos existem no [Portal de Dados Abertos do TSE](https://dadosabertos.tse.jus.br/), em CSVs grandes, e podem ser importados depois.
+
+## Fontes de dados (TSE)
+
+Tudo vem de `https://resultados.tse.jus.br/oficial/ele2026/`, os mesmos arquivos públicos usados pelo app Resultados do TSE.
+
+| Dado | Arquivo | Quando sai |
 |---|---|---|
-| **Boletins de urna (BU)** `resultados.tse.jus.br/oficial/ele2026/arquivo-urna/<pleito>/...` | Arquivo assinado de cada seção, decodificado aqui (ASN.1) | Assim que a seção transmite |
-| **Totalização oficial** `resultados.tse.jus.br/oficial/ele2026/<eleição>/dados/zz/...-u.json` | Totais oficiais por cidade do exterior | Após a liberação do TSE (17h de Brasília) |
+| Total do país | `<eleição>/dados/br/br-c0001-e<eleição>-u.json` | após as 17h de Brasília |
+| Por estado | `<eleição>/dados/<uf>/<uf>-c0001-e<eleição>-u.json` | após as 17h |
+| Estatística de todos os municípios de um estado | `<eleição>/dados/<uf>/<uf>-e<eleição>-ab.json` | após as 17h |
+| Por município | `<eleição>/dados/<uf>/<uf><município>-c0001-e<eleição>-u.json` | após as 17h |
+| Boletim de urna (BU) de cada seção do exterior | `arquivo-urna/<pleito>/dados/zz/<cidade>/<zona>/<seção>/...` | assim que a seção transmite |
 
-Códigos: 1º turno = eleição 6257 / pleito 3220 · 2º turno = eleição 6258 / pleito 3221. Para o exterior a "UF" é `zz`.
+Códigos de 2026: 1º turno = eleição 6257 / pleito 3220; 2º turno = eleição 6258 / pleito 3221. O exterior usa a "UF" `zz`.
+
+**Fonte dos dados do exterior** (opção nos filtros):
+- *Boletins de urna*: o BU é o arquivo assinado que cada urna gera ao fechar a votação. O painel decodifica o formato binário (ASN.1) e soma os votos seção por seção, então o exterior aparece antes da divulgação oficial.
+- *Totalização oficial*: os totais do TSE por cidade do exterior.
+- *Automático* (padrão): em cada cidade, usa a fonte com mais seções apuradas.
+
+No Brasil a fonte é sempre a totalização oficial, já que baixar os cerca de 470 mil BUs não é viável.
 
 ## Arquitetura
 
 ```
-TSE ──(job a cada 5 min)──► server/sync.js ──► dados/turno-N.json ──► Cloudflare ──► navegadores
+TSE ──► server/sync.js (job) ──► dados/*.json ──► server/server.js ──► Cloudflare ──► navegadores
 ```
 
-O job (`server/sync.js`) é o único cliente que fala com o TSE: baixa só os BUs novos (os já decodificados ficam em cache em `dados/cache-bu-*.json`), grava um snapshot por turno e publica parciais a cada 20 s durante a primeira carga. O painel lê só o snapshot, então o número de espectadores não aumenta a carga no TSE (que devolve muitos HTTP 429 em dia de eleição).
-
-Sem o servidor (por exemplo, abrindo com `servidor.ps1`), o painel detecta a ausência de `/saude` e consulta o TSE direto do navegador.
+- O **job de sincronização** é o único cliente que fala com o TSE. A cada ciclo (5 min por padrão) baixa o total do país, as 27 UFs, o exterior e os BUs novos. Os municípios rodam num loop separado e incremental: o arquivo agregado de cada UF diz quais municípios mudaram, e só esses são baixados.
+- Os resultados ficam em snapshots (`dados/turno-N.json` e `dados/turno-N-mun-<UF>.json`). O painel lê só esses arquivos, então o número de espectadores não aumenta a carga sobre o TSE, que em dia de eleição responde muito HTTP 429. O job tenta de novo com espera crescente e mantém o último dado bom quando algo falha.
+- Os BUs já decodificados e o estado dos municípios ficam em cache no volume `dados/`, e sobrevivem a reinícios.
+- Sem servidor (abrindo os arquivos de `public/` com `servidor.ps1`), o painel percebe que `/saude` não existe e consulta o TSE direto do navegador.
 
 ## Rodar com Docker
 
 ```bash
 docker compose up -d --build
-# painel em http://localhost:8080  ·  saúde em http://localhost:8080/saude
-docker compose logs -f painel     # acompanha a sincronização
+docker compose logs -f painel        # acompanha a sincronização
+curl http://localhost/saude          # horário do último snapshot de cada turno
 ```
-
-Variáveis (em `docker-compose.yml`):
 
 | Variável | Padrão | Uso |
 |---|---|---|
-| `SYNC_INTERVALO_MIN` | 5 | Intervalo da sincronização do 2º turno |
-| `TURNOS` | `2,1` | Turnos sincronizados (o 1º turno, já encerrado, só a cada 60 min) |
-| `CACHE_DADOS_S` | 30 | `max-age`/`s-maxage` dos snapshots |
-| `CONCORRENCIA` | 6 | Downloads simultâneos ao TSE |
+| `SYNC_INTERVALO_MIN` | `5` | Intervalo da sincronização do turno em andamento |
+| `TURNOS` | `2,1` | Turnos sincronizados (o 1º turno, já encerrado, a cada 60 min) |
+| `TURNOS_MUN` | `2,1` | Turnos com resultado por município |
+| `CACHE_DADOS_S` | `30` | `max-age`/`s-maxage` dos snapshots |
+| `CONCORRENCIA` | `6` | Downloads simultâneos ao TSE |
+| `PORTA` | `8080` | Porta do servidor dentro do container |
+| `HISTORICO` | `1` | `0` desliga o download do histórico |
+| `HISTORICO_QTD` | `20` | Quantas eleições entram no histórico |
 
-## Publicar atrás do Cloudflare
+## Publicar atrás do Cloudflare (proxy DNS)
 
-**Opção A: Cloudflare Tunnel (recomendada, sem abrir portas)**
-1. Zero Trust → Networks → Tunnels → *Create tunnel* → copie o token.
-2. Em *Public hostname*, aponte seu domínio para `http://painel:8080`.
-3. `TUNNEL_TOKEN=<token> docker compose --profile tunel up -d`
-4. Remova o bloco `ports:` do serviço `painel` se não quiser acesso direto.
+1. No servidor: `docker compose up -d --build` (o compose publica a porta **80** do host para o container).
+2. No Cloudflare, crie um registro **A** do seu domínio para o IP do servidor com o **proxy ligado** (nuvem laranja).
+3. Em **SSL/TLS**, use o modo **Flexível** (o Cloudflare atende em HTTPS e fala HTTP com o servidor). Se puser um proxy reverso com certificado na frente do container, pode usar **Completo (estrito)**.
+4. Libere a porta 80 no firewall do servidor só para os [IPs do Cloudflare](https://www.cloudflare.com/ips/), para ninguém acessar a origem direto.
+5. **Cache**: o Cloudflare não faz cache de `.json` por padrão. Crie uma *Cache Rule*: se o caminho da URI começa com `/dados/`, então **Elegível para cache**, com TTL de borda vindo do cabeçalho `Cache-Control` (30 s). `/saude` responde com `no-store`.
 
-**Opção B: proxy DNS (nuvem laranja)** apontando para o IP do servidor, porta 80/443 → 8080 (via proxy reverso ou regra de origem).
+Com o cache ligado, cada ponto de presença do Cloudflare busca um snapshot no máximo duas vezes por minuto, não importa quantas pessoas estejam assistindo.
 
-**Cache (importante):** o Cloudflare não faz cache de `.json` por padrão. Crie uma *Cache Rule*:
-- Se *URI Path* começa com `/dados/` → **Eligible for cache**, *Edge TTL: use cache-control header* (30 s).
+## Rodar na sua máquina, sem Docker (Windows)
 
-Assim cada ponto de presença do Cloudflare busca o snapshot no máximo 2 vezes por minuto, não importa quantas pessoas estejam assistindo. `/saude` responde com `no-store`.
+Clique duas vezes em **`INICIAR.bat`**. Na primeira vez ele baixa um Node.js portátil para a pasta `runtime\` (nada é instalado no sistema), sobe o servidor com o job de sincronização e abre http://localhost:8080.
 
-## Rodar localmente sem Docker (Windows)
+Alternativa mais leve: `powershell -ExecutionPolicy Bypass -File servidor.ps1` serve só o site, e o navegador consulta o TSE direto (sem job e sem municípios em lote).
 
-Clique duas vezes em `INICIAR.bat` (ou `powershell -ExecutionPolicy Bypass -File servidor.ps1`). Abre em http://localhost:8080 consultando o TSE direto.
+## Atalhos durante a live
 
-## Usar na live
+| Tecla | Ação |
+|---|---|
+| `F` | Abre/fecha os filtros |
+| `V` | Layout vertical 9:16 (capture a janela no TikTok Live Studio ou OBS) |
+| `T` | Liga/desliga o tour automático |
+| `S` | Liga/desliga o som |
+| `R` | Atualiza agora |
+| `Esc` / `Backspace` | Volta ao total / sobe um nível |
 
-- **F**: filtros (turno, fonte, continente, país, cidade, cor do mapa, ordenação…)
-- **V**: layout vertical 9:16; capture a janela no TikTok Live Studio/OBS
-- **T**: tour automático pelos países com mais votos
-- **Esc**: volta para o mundo · **Backspace**: sobe um nível
-- Clique em um país ou cidade (no mapa ou no ranking) para ver os votos daquela seleção; em uma cidade, o ranking mostra seção por seção.
+## Estrutura
+
+```
+public/            site estático (index.html, historico.html, app.js, bu.js, som.js, estilos, mapas)
+  geo/             malhas do IBGE: estados e municípios por UF
+  cidades.js       cidades do exterior com país e coordenadas
+  municipios.js    municípios (código TSE -> UF, nome, código IBGE, capital)
+server/sync.js     job de sincronização com o TSE
+server/historico.js job do histórico (últimas 20 eleições)
+server/server.js   servidor HTTP (site + snapshots + /saude)
+iniciar.ps1        roda tudo localmente com Node portátil
+```
 
 ## Observações
 
-- O BU é o dado da urna; o resultado oficial é a totalização do TSE. No modo *Automático*, cada cidade usa a fonte com mais seções apuradas.
-- Votos digitados em número inexistente contam como nulos (igual à totalização oficial).
-- Mapa: Natural Earth (domínio público). Fotos dos candidatos: TSE.
+- Votos digitados em número inexistente contam como nulos, como na totalização oficial.
+- Mapas: IBGE (estados e municípios) e Natural Earth (mundo), ambos de uso livre. Fotos dos candidatos: TSE.
+- Os dados são públicos e oficiais, mas este painel não é um produto do TSE. Em caso de divergência, vale o site oficial do TSE.
