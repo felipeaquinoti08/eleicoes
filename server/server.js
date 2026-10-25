@@ -36,12 +36,15 @@ const servidor = http.createServer((req, res) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); return res.end(); }
 
   if (req.url === '/saude') {
-    const st = {};
+    // ok continua true mesmo com coleta atrasada: o painel usa esse campo só para saber que há servidor
+    const snapshots = {};
     for (const t of [1, 2]) {
-      try { st['turno' + t] = fs.statSync(path.join(DIR_DADOS, `turno-${t}.json`)).mtime; } catch { st['turno' + t] = null; }
+      try { snapshots['turno' + t] = fs.statSync(path.join(DIR_DADOS, `turno-${t}.json`)).mtime; } catch { snapshots['turno' + t] = null; }
     }
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    return res.end(JSON.stringify({ ok: true, ...st }));
+    let hist = null;
+    try { hist = fs.statSync(path.join(DIR_DADOS, 'historico', 'indice.json')).mtime; } catch { /* ainda não baixou */ }
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify({ ok: true, agora: new Date().toISOString(), snapshots, historico: hist, coletas: sync.status() }, null, 2));
   }
 
   const r = resolver(req.url);

@@ -79,6 +79,30 @@ docker inspect --format "{{.State.Health.Status}}" apuracao-eleicoes   # healthy
 | `HISTORICO` | `1` | `0` desliga o download do histórico |
 | `HISTORICO_QTD` | `20` | Quantas eleições entram no histórico |
 
+### Como saber se a coleta está funcionando
+
+**1. Endpoint `/saude`**: abra `https://SEU-DOMINIO/saude` (nunca fica em cache). Para cada turno há três coletas: `brasil` (total e UFs), `exterior` (boletins de urna) e `municipios`. Em cada uma:
+
+| Campo | O que indica |
+|---|---|
+| `ok` / `erro` | se a última passada deu certo, e o erro quando não deu |
+| `ultimoSucesso` / `proxima` | quando rodou pela última vez e quando roda de novo (UTC) |
+| `rodando` | `true` enquanto a passada está em andamento (o exterior pode levar minutos com os 429 do TSE) |
+| `secoesApuradas`, `secoesComBU`, `municipiosComDados` | quanto já foi coletado |
+| `tseGeradoEm` | horário em que o **TSE** gerou o dado (Brasília) |
+
+Se `ultimoSucesso` avança a cada ciclo, a coleta está funcionando. Se `secoesApuradas` não muda, mas `tseGeradoEm` também não mudou, é o TSE que ainda não publicou dados novos.
+
+**2. Logs**: `docker compose -p eleicoes logs -f painel`. A cada ciclo aparecem linhas como:
+```
+turno 2: Brasil 214 seções nas UFs em 1.0s
+turno 2: exterior 775/1351 seções com BU (0 novos, 0 falhas), oficial 0/1351 em 0.6s
+turno 2: municípios 49 atualizados, 0 falhas em 2s
+```
+Linhas `aviso: 429 …` são normais em dia de eleição: o job tenta de novo sozinho. Preocupe-se só com `erro …` repetido em vários ciclos.
+
+**3. No painel**: o topo mostra "atualizado HH:MM:SS", que é o horário do último snapshot gravado pelo job.
+
 ### ARM e x86
 
 A imagem base `node:22-alpine` é publicada para **amd64 (x86)**, **arm64** (Oracle Ampere, AWS Graviton, Raspberry Pi 4/5 com sistema 64 bits) e **arm/v7** (ARM 32 bits). O app é JavaScript puro, sem dependências nativas. Em qualquer um desses servidores, `docker compose up -d --build` gera a imagem da arquitetura da própria máquina, sem nenhuma mudança.

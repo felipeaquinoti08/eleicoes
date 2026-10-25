@@ -126,6 +126,8 @@ async function sincronizarNacional(n) {
   publicar(n);
   const sec = Object.values(e.ufs).reduce((a, u) => a + u.secRec, 0);
   log(`turno ${n}: Brasil ${sec} seções nas UFs${falhas ? `, ${falhas} UFs com falha` : ""} em ${((Date.now() - inicio) / 1000).toFixed(1)}s`);
+  const secTot = Object.values(e.ufs).reduce((a, u) => a + u.secTot, 0);
+  return { secoesApuradas: sec, secoesTotal: secTot, ufsComFalha: falhas, tseGeradoEm: e.brasil?.hora || null };
 }
 
 async function sincronizarExterior(n) {
@@ -184,6 +186,7 @@ async function sincronizarExterior(n) {
   const nSec = Object.values(cidades).reduce((a, c) => a + c.secoes.length, 0);
   log(`turno ${n}: exterior ${nBU}/${nSec} seções com BU (${fila.length} novos, ${errosBU} falhas), oficial ${e.ofExterior?.secRec ?? 0}/${e.ofExterior?.secTot ?? 0}` +
     (errosOf ? `, ${errosOf} falhas oficiais` : "") + ` em ${((Date.now() - inicio) / 1000).toFixed(1)}s`);
+  return { secoesComBU: nBU, secoesTotal: nSec, buNovos: fila.length, buFalhas: errosBU, oficialApuradas: e.ofExterior?.secRec ?? 0 };
 }
 
 // ---------------------------------------------------------------- municípios do Brasil
@@ -225,15 +228,31 @@ async function sincronizarMunicipios(n) {
     gravarJSON(path.join(DIR_DADOS, `cache-mun-${n}.json`), est);
   }
   if (baixados || erros) log(`turno ${n}: municípios ${baixados} atualizados, ${erros} falhas em ${((Date.now() - inicio) / 1000).toFixed(0)}s`);
+  const comDados = Object.values(est).reduce((a, m) => a + Object.keys(m).length, 0);
+  return { municipiosComDados: comDados, atualizadosNestaPassada: baixados, falhas: erros };
 }
 
 // passadas contínuas, com uma pausa entre elas
 async function loopMunicipios(n, pausaMin) {
   for (;;) {
-    try { await sincronizarMunicipios(n); } catch (e) { log(`erro municípios turno ${n}:`, e.message); }
+    const inicio = Date.now();
+    marcar(n, "municipios", { rodando: true });
+    try {
+      const r = await sincronizarMunicipios(n);
+      marcar(n, "municipios", { ok: true, ultimoSucesso: new Date().toISOString(), duracaoS: +((Date.now() - inicio) / 1000).toFixed(1), erro: null, ...r });
+    } catch (e) {
+      marcar(n, "municipios", { ok: false, ultimaFalha: new Date().toISOString(), erro: e.message });
+      log(`erro municípios turno ${n}:`, e.message);
+    }
+    marcar(n, "municipios", { rodando: false, proxima: new Date(Date.now() + pausaMin * 60 * 1000).toISOString() });
     await espera(pausaMin * 60 * 1000);
   }
 }
+
+// estado de cada coleta, exposto em /saude
+const STATUS = {};
+function marcar(n, nome, dados) { const t = (STATUS["turno" + n] ||= {}); t[nome] = { ...(t[nome] || {}), ...dados }; }
+function status() { return STATUS; }
 
 function agendar(n, minutos, fn, nome) {
   let rodando = false, retentativa = null;
@@ -241,12 +260,18 @@ function agendar(n, minutos, fn, nome) {
     if (rodando) return;
     rodando = true;
     clearTimeout(retentativa);
-    try { await fn(n); }
+    const inicio = Date.now();
+    marcar(n, nome, { rodando: true, intervaloMin: minutos });
+    try {
+      const r = await fn(n);
+      marcar(n, nome, { ok: true, ultimoSucesso: new Date().toISOString(), duracaoS: +((Date.now() - inicio) / 1000).toFixed(1), erro: null, ...r });
+    }
     catch (e) {
+      marcar(n, nome, { ok: false, ultimaFalha: new Date().toISOString(), erro: e.message });
       log(`erro ${nome} turno ${n}: ${e.message} (nova tentativa em 1 min)`);
       retentativa = setTimeout(rodar, 60 * 1000);
     }
-    finally { rodando = false; }
+    finally { rodando = false; marcar(n, nome, { rodando: false, proxima: new Date(Date.now() + minutos * 60 * 1000).toISOString() }); }
   };
   rodar();
   return setInterval(rodar, minutos * 60 * 1000);
@@ -256,14 +281,14 @@ function iniciar() {
   fs.mkdirSync(DIR_DADOS, { recursive: true });
   const min = +process.env.SYNC_INTERVALO_MIN || 5;
   const turnos = (process.env.TURNOS || '2,1').split(',').map(s => s.trim()).filter(t => TURNOS[t]);
-  for (const t of turnos) { const m = t === '1' ? Math.max(min, 60) : min; estadoDo(t); agendar(t, m, sincronizarNacional, 'Brasil'); agendar(t, m, sincronizarExterior, 'exterior'); }; // 1º turno já está encerrado
+  for (const t of turnos) { const m = t === '1' ? Math.max(min, 60) : min; estadoDo(t); agendar(t, m, sincronizarNacional, 'brasil'); agendar(t, m, sincronizarExterior, 'exterior'); }; // 1º turno já está encerrado
   // municípios: o 1º turno já acabou, então depois da primeira carga só confere a cada 60 min
   for (const t of (process.env.TURNOS_MUN || '2,1').split(',').map(s => s.trim()).filter(t => TURNOS[t])) loopMunicipios(t, t === '1' ? 60 : 1);
   log(`sincronização ativa: turnos ${turnos.join(', ')} a cada ${min} min (1º turno a cada ${Math.max(min, 60)} min)`);
 }
 
 const sincronizarTurno = async n => { await sincronizarNacional(n); await sincronizarExterior(n); };
-module.exports = { iniciar, sincronizarTurno };
+module.exports = { iniciar, sincronizarTurno, status };
 if (require.main === module) {
   if (process.argv[2] === '--uma-vez') {
     fs.mkdirSync(DIR_DADOS, { recursive: true });
