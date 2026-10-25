@@ -92,7 +92,11 @@ Caminho: visitante → Cloudflare → Nginx Proxy Manager → container.
 
 **Cache dos resultados**: configure no **painel do Cloudflare**, não no NPM. Em *Caching → Cache Rules → Create rule*:
 - *Quando*: `URI Path` começa com `/dados/`
-- *Então*: **Eligible for cache**; *Edge TTL*: **Use cache-control header if present**; *Browser TTL*: **Respect origin**
+- *Então*: **Qualificado para cache** (*Eligible for cache*)
+- *TTL da borda*: **Use o cabeçalho de controle de cache, se presente, e ignore o cache, caso contrário** (deixe o campo de TTL vazio e não adicione TTL por código de status)
+- *Navegador TTL*, *Chave do cache*, *Vary* e as demais opções: deixe sem configurar
+
+Para conferir, rode duas vezes `curl -sI https://SEU-DOMINIO/dados/turno-2.json | grep -i cf-cache-status`: deve dar `MISS` e depois `HIT`. Se aparecer `DYNAMIC`, a regra não está valendo.
 
 É preciso porque o Cloudflare não faz cache de `.json` por padrão. O app manda `Cache-Control: max-age=30` nos snapshots, então cada ponto de presença do Cloudflare busca os resultados no NPM no máximo duas vezes por minuto, não importa quantas pessoas estejam assistindo. `/saude` responde com `no-store` e nunca fica em cache.
 
