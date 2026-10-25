@@ -92,7 +92,7 @@ setInterval(contarOnline, 30 * 1000).unref();
 
 function resolver(urlPath) {
   const p = decodeURIComponent(urlPath.split('?')[0]);
-  if (/^\/dados\/(turno-[12](-mun-[A-Z]{2})?|projecao-2)\.json$/.test(p)) return { arq: path.join(DIR_DADOS, path.basename(p)), dados: true };
+  if (/^\/dados\/(turno-[12](-mun-[A-Z]{2})?|projecao-2|gov-2)\.json$/.test(p)) return { arq: path.join(DIR_DADOS, path.basename(p)), dados: true };
   if (/^\/dados\/historico\/[a-z0-9-]+\.json$/.test(p)) return { arq: path.join(DIR_DADOS, 'historico', path.basename(p)), dados: false };
   if (/^\/dados\/fotos\/\d+\.jpeg$/.test(p)) return { arq: path.join(DIR_DADOS, 'fotos', path.basename(p)), dados: false };
   const rel = p === '/' ? 'index.html' : p.slice(1);

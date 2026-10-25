@@ -324,3 +324,23 @@ body.vertical .acoes { position: absolute; right: 12px; top: 8px; }
 .selo-uf.selo-zz { background: #38bdf8; }
 
 .tse-parado { color: #fbbf24; font-weight: 700; }
+
+/* ---------- seletor de cargo e modo Governador ---------- */
+.cargos { display: inline-flex; background: var(--painel2); border: 1px solid var(--borda); border-radius: 10px; padding: 2px; gap: 2px; }
+.cargos.oculto { display: none; }
+.cargos button { background: none; border: none; padding: 4px 12px; border-radius: 8px; font-weight: 700; font-size: 14px; color: var(--suave); }
+.cargos button.ativa { background: var(--destaque); color: #111; }
+#placar.gov-grade { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.gov-mini { text-align: left; background: var(--painel2); border: 1px solid var(--borda); border-radius: 10px; padding: 8px 10px; }
+.gov-mini:hover { border-color: var(--destaque); }
+.gm-topo { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; font-size: 14px; }
+.gm-topo small { margin-left: auto; color: var(--suave); font-size: 11px; }
+.gm-linha { display: flex; justify-content: space-between; font-size: 12px; color: var(--cor); }
+.gm-linha span { color: var(--texto); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gm-linha small { color: var(--suave); }
+.gm-trilho { height: 5px; background: #0006; border-radius: 3px; overflow: hidden; margin: 2px 0 4px; }
+.gm-trilho div { height: 100%; }
+body.vertical #placar.gov-grade { grid-template-columns: repeat(3, 1fr); }
+.gov-mini { min-width: 0; overflow: hidden; }
+#placar.gov-grade { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.gm-linha b { flex: none; margin-left: 6px; }

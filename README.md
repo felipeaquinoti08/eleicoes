@@ -7,6 +7,7 @@ Painel ao vivo da apuração das Eleições 2026 com dados públicos do TSE: Bra
 - **Mapa único, Brasil + exterior.** Clique num estado para ver os municípios dele, num país para ver as cidades, numa cidade do exterior para ver seção por seção. O placar, as estatísticas e o ranking mostram sempre a seleção atual. Municípios em cinza ainda não têm votos publicados pelo TSE.
 - **Navegação**: `Total › Brasil › Região › Estado › Município` e `Total › Exterior › Continente › País › Cidade › Seção`.
 - **Filtros**: turno, fonte dos dados do exterior, "ir para" (região, estado, continente, país), busca de município ou cidade, cor do mapa (quem lidera ou % de um candidato), ordenação do ranking, só locais com votos.
+- **Governador no 2º turno**: no seletor *Presidente | Governador* do cabeçalho, os estados com 2º turno para governador (em 2026: AC, AM, DF, ES, RN e TO, lidos da configuração do TSE), cada um com os próprios candidatos, mapa por município, ranking e letreiro.
 - **Projeção do resultado final** (2º turno, experimental): veja abaixo.
 - **Aviso de novos dados**: a cada avanço da apuração, toca um bipe no estilo da urna e aparece um aviso dizendo onde entraram votos (estados e países do exterior), quantos e o placar em cada lugar. O navegador só libera som depois de um clique na página, então o botão 🔊 pisca até isso acontecer.
 

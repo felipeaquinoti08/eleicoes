@@ -354,6 +354,11 @@ function iniciar() {
   } // 1º turno já está encerrado
   // municípios: o 1º turno já acabou, então depois da primeira carga só confere a cada 60 min
   for (const t of (process.env.TURNOS_MUN || '2,1').split(',').map(s => s.trim()).filter(t => TURNOS[t])) loopMunicipios(t, t === '1' ? 60 : 1);
+  // governador no 2º turno (só nos estados com 2º turno), no mesmo ritmo do Brasil
+  if (process.env.GOVERNADOR !== '0' && turnos.includes('2')) {
+    const gov = require('./governador').criar({ getJSON, baixar, emParalelo, gravarJSON, log, DIR_DADOS, CONCORRENCIA });
+    agendar('2', brasilMin, () => gov.sincronizar(), 'governador');
+  }
   log(`sincronização ativa: turnos ${turnos.join(', ')}; Brasil a cada ${brasilMin * 60} s, exterior a cada ${min} min (1º turno a cada ${Math.max(min, 60)} min)`);
 }
 

@@ -40,7 +40,7 @@ const espera = ms => new Promise(r => setTimeout(r, ms));
 // ---------------------------------------------------------------- configuração
 const PADRAO = {
   turno: '2', fonte: 'auto', destaque: 'vencedor', ordem: 'comp', soComVotos: true, cidades: true,
-  rotulos: true, brasil: true, projecao: true, modo: 'completo', tour: false, tourSeg: '8', intervalo: '30', som: true,
+  rotulos: true, brasil: true, projecao: true, modo: 'completo', cargo: 'presidente', tour: false, tourSeg: '8', intervalo: '30', som: true,
 };
 const cfg = Object.assign({}, PADRAO, JSON.parse(localStorage.getItem('cfg-apuracao') || '{}'));
 const salvarCfg = () => localStorage.setItem('cfg-apuracao', JSON.stringify(cfg));
@@ -287,6 +287,9 @@ async function atualizar() {
       try { ok = await carregarSnapshot(); } catch (e) { ok = false; console.warn(e); }
       const uf = ufEmFoco();
       if (uf) await carregarMunicipiosUF(uf).catch(e => console.warn(e));
+      if (cfg.turno === '2') { // governador no 2º turno (estados com 2º turno)
+        try { const rg = await fetch('dados/gov-2.json', { cache: 'no-cache' }); if (rg.ok) gov = await rg.json(); } catch { /* sem governador */ }
+      }
       projecao = null;
       if (cfg.turno === '2') {
         try { const rp = await fetch('dados/projecao-2.json', { cache: 'no-cache' }); if (rp.ok) projecao = await rp.json(); } catch { /* sem projeção */ }
@@ -597,6 +600,7 @@ function estilizarPais(layer) {
 }
 
 function estilizarUF(layer) {
+  if (govAtivo()) return estilizarUFGov(layer);
   const uf = layer.feature.properties.uf;
   const r = resumo(dadosUF(uf));
   const c = corPara(r);
@@ -615,6 +619,7 @@ function estilizarUF(layer) {
 }
 
 function estilizarMun(layer) {
+  if (govAtivo()) return estilizarMunGov(layer);
   const cd = IBGE_PARA_TSE[layer.feature.properties.ibge];
   const r = resumo(cd ? dadosMun(cd) : vazio());
   const c = corPara(r);
@@ -751,6 +756,7 @@ function limitesUFs(lista) {
 
 function enquadrar() {
   const op = { padding: [30, 30], duration: 1 };
+  if (sel.tipo === 'govs') { const b = limitesUFs(govUFs()); if (b) mapa.flyToBounds(b, { ...op, maxZoom: 5 }); return; }
   if (sel.tipo === 'total') { mapa.flyTo([-5, -35], ehLive() ? 2.25 : 2.75, { duration: 1 }); return; }
   if (sel.tipo === 'mundo') { mapa.flyTo([20, 10], ehLive() ? 1.5 : 2, { duration: 1 }); return; }
   if (sel.tipo === 'brasil') { const b = limitesUFs(UFS); if (b) mapa.flyToBounds(b, op); return; }
@@ -771,6 +777,11 @@ function enquadrar() {
 
 // ---------------------------------------------------------------- seleção
 function selecionar(s, { mover = true, manual = true } = {}) {
+  if (govAtivo()) {
+    // no modo Governador só existem a visão geral, os estados com 2º turno e os municípios deles
+    if (s.tipo === 'uf' && !govTemUF(s.id)) return;
+    if (!['govs', 'uf', 'municipio'].includes(s.tipo)) s = { tipo: 'govs' };
+  }
   sel = s;
   if (manual && cfg.tour) pararTour(true);
   aba = { total: 'ufs', brasil: 'ufs', regiao: 'ufs', uf: 'municipios', municipio: 'municipios', mundo: 'paises', continente: 'paises', pais: 'cidades', cidade: 'secoes' }[s.tipo];
@@ -825,20 +836,24 @@ function agendarRender() {
 }
 
 function render() {
+  if (govAtivo()) return renderGov();
+  renderCargos();
   if (!cands.length) return;
   const d = agregarSel(sel);
   const r = resumo(d);
 
   $('subtitulo').innerHTML = `Presidente · ${T.nome} · ${iconeSel(sel)} ${esc(nomeSel(sel))}`;
+  // o percentual do topo é o da seleção atual (estado, município, país…); fora do Total, mostra também o do Total
   const dTot = agregarSel({ tipo: 'total' });
   const rTot = resumo(dTot);
-  $('pctSecoes').textContent = pct(rTot.pctSec, 2);
-  $('barraSecoes').style.width = rTot.pctSec + '%';
+  $('pctSecoes').textContent = pct(r.pctSec, 2);
+  $('barraSecoes').style.width = r.pctSec + '%';
   const hora = ultimaAtualizacao ? ultimaAtualizacao.toLocaleTimeString('pt-BR') : '–';
   // horário em que o TSE gerou o último dado: deixa claro quando a demora é do TSE e não do painel
   const tse = horaTSE();
   const parado = tse && cfg.turno === '2' && Date.now() - tse.data > 15 * 60 * 1000;
-  $('ultimaAtual').innerHTML = `${fmt(dTot.secRec)} de ${fmt(dTot.secTot)} seções · atualizado ${hora}` +
+  const ondeSel = sel.tipo === 'total' ? '' : ` em ${esc(sel.tipo === 'municipio' ? MUNICIPIOS[sel.id][1] : nomeSel(sel))} · total ${pct(rTot.pctSec, 2)}`;
+  $('ultimaAtual').innerHTML = `${fmt(d.secRec)} de ${fmt(d.secTot)} seções${ondeSel} · atualizado ${hora}` +
     (tse ? ` · <span class="${parado ? 'tse-parado' : ''}" title="Horário em que o TSE gerou o último dado publicado">${parado ? '⚠ TSE sem novos dados desde ' : 'dado do TSE das '}${tse.texto}</span>` : '') +
     (pendentesBU > 0 ? ` · baixando ${fmt(pendentesBU)} BUs` : '');
 
@@ -1109,7 +1124,7 @@ function iniciarTour() {
     for (const c of cidades.values()) if (c.iso) (porPais[c.iso] ||= []).push(c);
     const paises = Object.entries(porPais).map(([iso, l]) => ({ iso, d: agregar(l) }))
       .filter(p => p.d.comp > 0).sort((a, b) => b.d.comp - a.d.comp).slice(0, 10);
-    const roteiro = [
+    const roteiro = govAtivo() ? [{ tipo: 'govs' }, ...govUFs().map(uf => ({ tipo: 'uf', id: uf }))] : [
       { tipo: 'total' }, { tipo: 'brasil' }, ...ufsComVotos.map(x => ({ tipo: 'uf', id: x.uf })),
       { tipo: 'mundo' }, ...paises.map(p => ({ tipo: 'pais', id: p.iso })),
     ];
@@ -1240,7 +1255,7 @@ function ligarFiltros() {
     else if (k === 'v' || k === 'l') { $('fModo').value = ehLive() ? 'completo' : 'live'; $('fModo').onchange(); }
     else if (k === 's') { $('fSom').checked = !cfg.som; $('fSom').onchange(); }
     else if (k === 'r') atualizar();
-    else if (k === 'escape') { if (sel.tipo !== 'total') selecionar({ tipo: 'total' }); }
+    else if (k === 'escape') { const raiz = govAtivo() ? 'govs' : 'total'; if (sel.tipo !== raiz) selecionar({ tipo: raiz }); }
     else if (k === 'backspace') voltar();
     setTimeout(atualizarBotaoSom, 50);
   });
