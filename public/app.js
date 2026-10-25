@@ -443,13 +443,33 @@ function somaUFs(lista) { const acc = vazio(); for (const uf of lista) somar(acc
 
 const ehExterior = s => ['mundo', 'continente', 'pais', 'cidade'].includes(s.tipo);
 
+// Exterior oficial derivado: em 2026 o TSE deixou os arquivos do exterior (zz) parados e só atualiza a
+// totalização do exterior dentro do total do país. Então exterior = total do país − soma das 27 UFs.
+function exteriorDerivado() {
+  if (!brasil || !Object.keys(ufs).length) return null;
+  const s = somaUFs(UFS);
+  const d = vazio();
+  for (const k of ['secTot', 'secRec', 'aptos', 'comp', 'brancos', 'nulos']) d[k] = (brasil[k] || 0) - (s[k] || 0);
+  for (const c of cands) d.votos[c.n] = (brasil.votos[c.n] || 0) - (s.votos[c.n] || 0);
+  const negativo = Object.values(d.votos).some(v => v < 0) || ['secTot', 'secRec', 'comp'].some(k => d[k] < 0);
+  return negativo || d.secRec <= 0 ? null : d; // UFs mais novas que o total do país: não dá para derivar
+}
+// Exterior inteiro: usa o derivado do TSE quando ele tem mais seções que os boletins de urna já baixados
+function dadosExterior() {
+  const bu = agregar([...cidades.values()]);
+  const der = cfg.fonte !== 'bu' ? exteriorDerivado() : null;
+  if (der && der.secRec > bu.secRec) return Object.assign(der, { nCid: bu.nCid, nCidVotos: bu.nCidVotos, derivado: true, secBU: bu.secRec });
+  return bu;
+}
+
 function agregarSel(s) {
   switch (s.tipo) {
-    case 'total': return somar(somaUFs(UFS), agregar([...cidades.values()]));
+    case 'total': return somar(somaUFs(UFS), dadosExterior());
     case 'brasil': return somaUFs(UFS);
     case 'regiao': return somaUFs(REGIOES[s.id][1]);
     case 'uf': return dadosUF(s.id);
     case 'municipio': return dadosMun(s.id);
+    case 'mundo': return dadosExterior();
     default: return agregar(cidadesDa(s));
   }
 }
@@ -910,8 +930,11 @@ function renderEstatisticas(d, r) {
     ['Nulos', fmt(d.nulos) + (d.comp ? ` <small>${pct(100 * d.nulos / d.comp)}</small>` : '')],
   ];
   if (['mundo', 'continente'].includes(sel.tipo)) itens.splice(1, 0, ['Cidades', `${fmt(d.nCidVotos)}/${fmt(d.nCid)}`]);
+  if (sel.tipo === 'mundo' && d.derivado) {
+    itens.push(['Fonte', `<small>TSE oficial (total do país − estados). Países e cidades: boletins de ${fmt(d.secBU)} seções</small>`]);
+  }
   if (sel.tipo === 'total') {
-    const dx = agregar([...cidades.values()]);
+    const dx = dadosExterior();
     itens.splice(1, 0, ['Exterior', `${fmt(dx.comp)} <small>votantes</small>`]);
   }
   let h = itens.map(([k, v]) => `<div class="est"><span>${k}</span><b>${v}</b></div>`).join('');
@@ -925,7 +948,7 @@ function renderEstatisticas(d, r) {
 }
 
 function item(chave, nome, icone, d, s) { return { chave, nome, icone, d, r: resumo(d), s }; }
-const itemExterior = () => item('ZZ', 'Exterior', '<span class="selo-uf selo-zz">🌍</span>', agregar([...cidades.values()]), { tipo: 'mundo' });
+const itemExterior = () => item('ZZ', 'Exterior', '<span class="selo-uf selo-zz">🌍</span>', dadosExterior(), { tipo: 'mundo' });
 
 function itensRanking() {
   let itens = [];
@@ -984,7 +1007,7 @@ function ordenar(itens) {
 
 function abasDaSelecao() {
   switch (sel.tipo) {
-    case 'total': return [['ufs', 'Estados e exterior'], ['regioes', 'Regiões e exterior'], ['paises', 'Países do exterior']];
+    case 'total': return [['ufs', 'Estados + exterior'], ['regioes', 'Regiões'], ['paises', 'Países']];
     case 'brasil': return [['ufs', 'Estados'], ['regioes', 'Regiões']];
     case 'regiao': return [['ufs', 'Estados']];
     case 'uf': case 'municipio': return [['municipios', 'Municípios']];
