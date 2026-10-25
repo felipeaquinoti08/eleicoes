@@ -75,9 +75,16 @@ function cardGov2T(uf) {
   const onde = dm ? `em ${esc(MUNICIPIOS[sel.id][1])}` : 'no estado';
   return `<button class="oc-card oc-clicavel" onclick="abrirGovernador('${uf}')">
     <div class="oc-topo"><b>Governador <small>2º turno · ao vivo · ${onde}</small></b><span class="oc-link">ver no mapa ›</span></div>
-    ${r.lista.map(c => `<div class="oc-linha"><span class="oc-nome"><i style="background:${c.cor}"></i>${esc(c.nome)} <small>${esc(c.partido)}</small></span><b>${pct(c.pct)}</b></div>
-      <div class="gm-trilho"><div style="width:${c.pct}%;background:${c.cor}"></div></div>`).join('')}
+    ${r.lista.map(candidatoComFoto).join('')}
     <div class="oc-sub">${fmt(d?.secRec)}/${fmt(d?.secTot)} seções (${pct(r.pctSec)})</div></button>`;
+}
+
+// linha de candidato com foto (iniciais se a foto não carregar), nome, partido, % e barra
+function candidatoComFoto(c) {
+  return `<div class="oc-cand" style="--cor:${c.cor}">${imgFoto(c)}
+    <div class="oc-cand-info"><div class="oc-linha"><span class="oc-nome">${esc(c.nome)} <small>${esc(c.n)} · ${esc(c.partido)}</small></span><b>${pct(c.pct)}</b></div>
+      <div class="gm-trilho"><div style="width:${c.pct}%;background:${c.cor}"></div></div>
+      <div class="oc-votos">${fmt(c.votos)} votos</div></div></div>`;
 }
 
 // presidente no estado (aparece no modo Governador)
@@ -88,8 +95,7 @@ function cardPresidente(uf) {
   const r = resumo(d);
   return `<button class="oc-card oc-clicavel" onclick="abrirPresidente('${uf}')">
     <div class="oc-topo"><b>Presidente <small>${T.nome} · ${d === dm ? 'no município' : 'no estado'}</small></b><span class="oc-link">ver no mapa ›</span></div>
-    ${r.lista.slice(0, 2).map(c => `<div class="oc-linha"><span class="oc-nome"><i style="background:${c.cor}"></i>${esc(c.nome)}</span><b>${pct(c.pct)}</b></div>
-      <div class="gm-trilho"><div style="width:${c.pct}%;background:${c.cor}"></div></div>`).join('')}
+    ${r.lista.slice(0, 2).map(candidatoComFoto).join('')}
     <div class="oc-sub">${fmt(d.secRec)}/${fmt(d.secTot)} seções (${pct(r.pctSec)})</div></button>`;
 }
 

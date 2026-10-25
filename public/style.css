@@ -370,3 +370,9 @@ body.vertical #placar.gov-grade { grid-template-columns: repeat(3, 1fr); }
 .badge.turno2 { background: #f59e0b; color: #111; }
 /* no live não há espaço: os outros cargos ficam só no modo completo */
 body.vertical .outros-cargos, body.vertical .oc-dica { display: none; }
+.oc-cand { display: grid; grid-template-columns: 44px 1fr; gap: 8px; align-items: center; padding: 3px 0; }
+.oc-cand .foto { width: 44px; height: 44px; border: 2px solid var(--cor); font-size: 14px; }
+.oc-cand-info { min-width: 0; }
+.oc-cand .oc-linha { font-size: 14px; }
+.oc-cand .oc-linha b { color: var(--cor); font-size: 16px; }
+.oc-votos { color: var(--suave); font-size: 11px; font-variant-numeric: tabular-nums; }
