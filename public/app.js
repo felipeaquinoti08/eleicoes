@@ -961,7 +961,7 @@ function renderEstatisticas(d, r) {
       ? `<div class="est brasil"><span>TSE oficial · total do país (${pct(rb.pctSec)} das seções)</span><b>${rb.lista.slice(0, 2).map(c => `<em style="color:${c.cor}">${esc(c.nome)} ${pct(c.pct)}</em>`).join(' × ')}</b></div>`
       : `<div class="est brasil"><span>TSE oficial · total do país</span><b><small>aguardando divulgação (a partir das 17h de Brasília)</small></b></div>`;
   }
-  $('estatisticas').innerHTML = h;
+  $('estatisticas').innerHTML = h + htmlOutrosCargos();
 }
 
 function item(chave, nome, icone, d, s) { return { chave, nome, icone, d, r: resumo(d), s }; }

@@ -160,7 +160,7 @@ function escolherCargo(cd) {
   escolherLocal(br ? 'BR' : locais.length === 1 ? chaveLocal(locais[0]) : '');
 }
 
-async function escolherEleicao(id) {
+async function escolherEleicao(id, cargoInicial, localInicial) {
   document.querySelectorAll('.el-item').forEach(b => b.classList.toggle('ativa', b.dataset.id === id));
   $('resultadoHist').innerHTML = '<p class="vazio-hist">Carregando…</p>';
   eleicao = await (await fetch(`dados/historico/${id}.json`)).json();
@@ -168,7 +168,9 @@ async function escolherEleicao(id) {
     (eleicao.completo ? '' : ' · <b>dados parciais, completando no próximo ciclo</b>') + '</small>';
   $('cargos').innerHTML = eleicao.cargos.map(c => `<button data-cd="${c.cd}">${esc(c.nome)}</button>`).join('');
   $('cargos').querySelectorAll('button').forEach(b => b.onclick = () => escolherCargo(+b.dataset.cd));
-  escolherCargo(eleicao.cargos[0].cd);
+  const cargo = eleicao.cargos.find(c => c.cd === cargoInicial) || eleicao.cargos[0];
+  escolherCargo(cargo.cd);
+  if (localInicial && cargo.locais.some(l => chaveLocal(l) === localInicial)) escolherLocal(localInicial);
   history.replaceState(null, '', '#' + id);
 }
 
@@ -187,7 +189,9 @@ async function iniciar() {
   document.querySelectorAll('.el-item').forEach(b => b.onclick = () => escolherEleicao(b.dataset.id));
   $('hLocal').onchange = () => escolherLocal($('hLocal').value);
   $('hModo').onchange = () => { modo = $('hModo').value; renderResultado(); };
-  const inicial = location.hash.slice(1);
-  escolherEleicao(indice.some(e => e.id === inicial) ? inicial : indice[0].id);
+  // endereço #<eleição>[/<cargo>/<local>], usado pelos links "ver todos" do painel ao vivo
+  const [inicial, cargo, local] = decodeURIComponent(location.hash.slice(1)).split('/');
+  if (indice.some(e => e.id === inicial)) escolherEleicao(inicial, +cargo || null, local || null);
+  else escolherEleicao(indice[0].id);
 }
 iniciar();

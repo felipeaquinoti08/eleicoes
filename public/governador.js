@@ -130,7 +130,7 @@ function renderEstatisticasGov(d, r) {
   ];
   if (r.validos != null) itens.push(['Válidos', fmt(r.validos)]);
   itens.push(['Brancos', fmt(d?.brancos)], ['Nulos', fmt(d?.nulos)]);
-  $('estatisticas').innerHTML = itens.map(([k, v]) => `<div class="est"><span>${k}</span><b>${v}</b></div>`).join('');
+  $('estatisticas').innerHTML = itens.map(([k, v]) => `<div class="est"><span>${k}</span><b>${v}</b></div>`).join('') + htmlOutrosCargos();
 }
 
 function corGov(r) {

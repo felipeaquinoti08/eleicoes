@@ -8,6 +8,7 @@ Painel ao vivo da apuração das Eleições 2026 com dados públicos do TSE: Bra
 - **Navegação**: `Total › Brasil › Região › Estado › Município` e `Total › Exterior › Continente › País › Cidade › Seção`.
 - **Filtros**: turno, fonte dos dados do exterior, "ir para" (região, estado, continente, país), busca de município ou cidade, cor do mapa (quem lidera ou % de um candidato), ordenação do ranking, só locais com votos.
 - **Governador no 2º turno**: no seletor *Presidente | Governador* do cabeçalho, os estados com 2º turno para governador (em 2026: AC, AM, DF, ES, RN e TO, lidos da configuração do TSE), cada um com os próprios candidatos, mapa por município, ranking e letreiro.
+- **Outros cargos no estado**: ao selecionar um estado ou município, abaixo do placar aparecem os demais cargos daquele estado, um embaixo do outro. Governador (ao vivo no 2º turno, quando o estado tem 2º turno; senão o resultado do 1º turno), Senador e Deputados Federal e Estadual/Distrital (resultado do 1º turno, com eleitos, bancada por partido e mais votados). No modo Governador, o card do Presidente no estado aparece no lugar. Cada card leva ao mapa do cargo ou à lista completa no Histórico (`historico.html#<eleição>/<cargo>/<UF>`).
 - **Projeção do resultado final** (2º turno, experimental): veja abaixo.
 - **Aviso de novos dados**: a cada avanço da apuração, toca um bipe no estilo da urna e aparece um aviso dizendo onde entraram votos (estados e países do exterior), quantos e o placar em cada lugar. O navegador só libera som depois de um clique na página, então o botão 🔊 pisca até isso acontecer.
 
@@ -223,6 +224,7 @@ public/            site estático (index.html, historico.html, app.js, bu.js, so
 server/sync.js     job de sincronização com o TSE
 server/projecao.js  projeção do 2º turno a partir do 1º turno
 server/governador.js coleta do 2º turno para governador
+public/outros-cargos.js  cards dos outros cargos ao selecionar um estado
 server/historico.js job do histórico (últimas 20 eleições)
 server/server.js   servidor HTTP (site + snapshots + /saude)
 iniciar.ps1        roda tudo localmente com Node portátil

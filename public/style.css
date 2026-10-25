@@ -344,3 +344,29 @@ body.vertical #placar.gov-grade { grid-template-columns: repeat(3, 1fr); }
 .gov-mini { min-width: 0; overflow: hidden; }
 #placar.gov-grade { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .gm-linha b { flex: none; margin-left: 6px; }
+
+/* ---------- outros cargos no estado ---------- */
+#estatisticas { overflow: auto; min-height: 0; align-self: stretch; align-content: start; }
+.outros-cargos { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.oc-titulo { font-weight: 800; font-size: 14px; color: var(--destaque); padding: 2px 2px 0; }
+.oc-card { display: block; width: 100%; text-align: left; background: var(--painel); border: 1px solid var(--borda); border-radius: 10px; padding: 8px 10px; font: inherit; color: inherit; }
+.oc-clicavel { cursor: pointer; }
+.oc-clicavel:hover { border-color: var(--destaque); }
+.oc-topo { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; margin-bottom: 4px; font-size: 14px; }
+.oc-topo small { color: var(--suave); font-weight: 400; font-size: 11px; }
+.oc-link { color: var(--suave); font-size: 11px; text-decoration: underline; white-space: nowrap; }
+.oc-linha { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; padding: 1px 0; }
+.oc-nome { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oc-nome i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
+.oc-nome small { color: var(--suave); }
+.oc-nome .badge { font-size: 9px; }
+.oc-linha b { font-variant-numeric: tabular-nums; flex: none; }
+.oc-sub { color: var(--suave); font-size: 11px; margin: 3px 0 2px; }
+.oc-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.oc-chip { font-size: 11px; border: 1px solid var(--cor); color: var(--texto); border-radius: 6px; padding: 0 5px; }
+.oc-dica { grid-column: 1 / -1; color: var(--suave); font-size: 12px; padding: 4px 2px; }
+.badge { font-size: 10px; font-weight: 800; padding: 1px 5px; border-radius: 5px; margin-left: 4px; vertical-align: 1px; }
+.badge.eleito { background: #16a34a; color: #fff; }
+.badge.turno2 { background: #f59e0b; color: #111; }
+/* no live não há espaço: os outros cargos ficam só no modo completo */
+body.vertical .outros-cargos, body.vertical .oc-dica { display: none; }
