@@ -94,31 +94,23 @@ docker inspect --format "{{.State.Health.Status}}" apuracao-eleicoes   # healthy
 
 ### Dados persistentes entre deploys
 
-Os resultados ficam na pasta **`dados/` ao lado do `docker-compose.yml`**, montada no container. Ela está no `.gitignore`, então `git pull` não mexe nela, e sobrevive a rebuild, `down -v` e troca de nome do projeto. Ao subir, o log mostra o que já está sendo servido:
+Os resultados coletados ficam no **volume Docker `<projeto>_dados`** (com `-p eleicoes`, o volume `eleicoes_dados`). O volume sobrevive a `git pull`, rebuild e redeploy, e o servidor entrega o que já está nele assim que sobe. Ao iniciar, o log mostra o que está sendo servido:
 
 ```
 servindo dados já gravados imediatamente: turno-2.json (2026-10-25T20:51:57Z), …, 32 arquivos de municípios
 ```
 
-O container começa como root só para acertar o dono dessa pasta, e em seguida o servidor passa a rodar como o usuário `node` (uid 1000).
+Cuidados para não perder os dados:
+- use sempre o mesmo nome de projeto (`-p eleicoes`); outro nome cria outro volume, vazio;
+- não use `docker compose down -v` (o `-v` apaga o volume);
+- para guardar numa pasta do servidor em vez do volume, defina `DADOS=/caminho/absoluto` no `.env`, **fora** da pasta do projeto. Ferramentas de deploy costumam recriar a pasta do projeto e apagariam os dados.
 
-**Vindo de uma versão anterior (volume nomeado)?** Copie os dados do volume antigo para a pasta uma vez, antes do novo `up`:
+Para conferir o que há no volume:
 ```bash
-docker volume ls | grep dados                       # ex.: eleicoes_dados
-mkdir -p dados
-docker run --rm -v eleicoes_dados:/de -v "$(pwd)/dados":/para alpine cp -a /de/. /para/
+docker run --rm -v eleicoes_dados:/d alpine ls -la /d
 ```
 
-| Variável | Padrão | Uso |
-|---|---|---|
-| `SYNC_INTERVALO_MIN` | `5` | Intervalo da sincronização do turno em andamento |
-| `TURNOS` | `2,1` | Turnos sincronizados (o 1º turno, já encerrado, a cada 60 min) |
-| `TURNOS_MUN` | `2,1` | Turnos com resultado por município |
-| `CACHE_DADOS_S` | `30` | `max-age`/`s-maxage` dos snapshots |
-| `CONCORRENCIA` | `4` | Downloads simultâneos ao TSE. Se o `/saude` mostrar muitos 429, baixe para 2 |
-| `PORTA` | `8080` | Porta do servidor dentro do container |
-| `HISTORICO` | `1` | `0` desliga o download do histórico |
-| `HISTORICO_QTD` | `20` | Quantas eleições entram no histórico |
+O container começa como root só para acertar o dono da pasta de dados, e em seguida o servidor passa a rodar como o usuário `node` (uid 1000).
 
 ### Como saber se a coleta está funcionando
 

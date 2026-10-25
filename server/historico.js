@@ -135,6 +135,7 @@ async function baixarEleicao(el) {
   }
   if (!cargos.length) return falhas ? 'falha' : 'indisponivel';
   const doc = { ...el, municipios: undefined, completo: falhas === 0, baixado: new Date().toISOString(), cargos };
+  fs.mkdirSync(DIR, { recursive: true });
   fs.writeFileSync(arq + '.tmp', JSON.stringify(doc));
   fs.renameSync(arq + '.tmp', arq);
   return falhas ? 'parcial' : 'ok';
@@ -185,6 +186,7 @@ async function sincronizarHistorico() {
   }
   indice.sort((a, b) => b.data.localeCompare(a.data));
   const arq = path.join(DIR, 'indice.json');
+  fs.mkdirSync(DIR, { recursive: true });
   fs.writeFileSync(arq + '.tmp', JSON.stringify({ gerado: new Date().toISOString(), eleicoes: indice.slice(0, TOTAL) }));
   fs.renameSync(arq + '.tmp', arq);
   log(`índice com ${Math.min(TOTAL, indice.length)} eleições`);

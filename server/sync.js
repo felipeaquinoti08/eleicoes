@@ -70,6 +70,7 @@ function oficialDe(j) {
 
 function gravarJSON(arquivo, obj) {
   const tmp = arquivo + '.tmp';
+  fs.mkdirSync(path.dirname(arquivo), { recursive: true }); // recria a pasta se ela tiver sido apagada por fora
   fs.writeFileSync(tmp, JSON.stringify(obj));
   fs.renameSync(tmp, arquivo); // troca atômica: o servidor nunca entrega arquivo pela metade
 }
