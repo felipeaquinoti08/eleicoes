@@ -108,6 +108,12 @@ const servidor = http.createServer((req, res) => {
 
   const caminhoUrl = req.url.split('?')[0];
 
+  // versão do site em execução: as páginas abertas comparam com a delas e recarregam após um deploy
+  if (caminhoUrl === '/versao') {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify({ versao: VERSAO }));
+  }
+
   // presença: cada aba aberta manda um sinal a cada 30 s; conta quem deu sinal recentemente
   if (caminhoUrl === '/presenca') {
     const id = new URL(req.url, 'http://x').searchParams.get('c') || '';

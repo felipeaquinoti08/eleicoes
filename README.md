@@ -11,6 +11,10 @@ Painel ao vivo da apuração das Eleições 2026 com dados públicos do TSE: Bra
 - **Projeção do resultado final** (2º turno, experimental): veja abaixo.
 - **Aviso de novos dados**: a cada avanço da apuração, toca um bipe no estilo da urna e aparece um aviso dizendo onde entraram votos (estados e países do exterior), quantos e o placar em cada lugar. O navegador só libera som depois de um clique na página, então o botão 🔊 pisca até isso acontecer.
 
+## Atualização automática do painel
+
+A cada 5 minutos cada página aberta pergunta ao servidor (`/versao`) qual versão do painel está no ar. Se você fez um deploy com mudanças, a página avisa "Nova versão do painel" e recarrega sozinha, voltando para o mesmo lugar: filtros e configurações (salvos no navegador), local selecionado, aba do ranking, cargo e tour. Sem deploy novo, nada é recarregado: os resultados já se atualizam a cada 30 s sem recarregar a página, e assim o som continua liberado e o mapa não pisca.
+
 ## Pessoas online
 
 Cada navegador com o painel aberto manda um sinal anônimo para `/presenca` a cada 30 s (um id aleatório guardado no próprio navegador, sem dados pessoais). O servidor conta quem deu sinal nos últimos 90 s e mostra o número no cabeçalho (👥 N online) e no `/saude`, com o pico do dia. Várias abas do mesmo navegador contam como uma pessoa. `/presenca` responde com `no-store` e não entra na regra de cache do Cloudflare (que só pega `/dados/`). A contagem fica na memória e recomeça do zero quando o container reinicia.

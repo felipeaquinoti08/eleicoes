@@ -1261,6 +1261,35 @@ function ligarFiltros() {
   });
 }
 
+// ---------------------------------------------------------------- nova versão do painel
+// A cada 5 min a página pergunta ao servidor qual versão está no ar. Se mudou (houve deploy), guarda o que está na
+// tela e recarrega. Filtros e configurações já ficam no localStorage; aqui vai a seleção, a aba e o tour.
+const CHAVE_TELA = 'tela-antes-de-atualizar';
+function vigiarVersao() {
+  const minha = window.VERSAO_APP;
+  if (!minha) return; // página aberta sem o servidor (sem versão): nada a vigiar
+  setInterval(async () => {
+    try {
+      const { versao } = await (await fetch('versao', { cache: 'no-store' })).json();
+      if (!versao || versao === minha) return;
+      sessionStorage.setItem(CHAVE_TELA, JSON.stringify({ sel, aba, tour: cfg.tour, em: Date.now() }));
+      $('ndLista').innerHTML = '<div class="nd-mais">Nova versão do painel. Atualizando, sem perder seus filtros…</div>';
+      $('novosDados').classList.add('mostrar');
+      setTimeout(() => location.reload(), 2500);
+    } catch { /* servidor fora do ar: tenta de novo na próxima */ }
+  }, 5 * 60 * 1000);
+}
+function restaurarEstadoTela() {
+  let t = null;
+  try { t = JSON.parse(sessionStorage.getItem(CHAVE_TELA) || 'null'); } catch { /* ignora */ }
+  sessionStorage.removeItem(CHAVE_TELA);
+  if (!t || Date.now() - t.em > 10 * 60 * 1000 || !t.sel) return false;
+  selecionar(t.sel, { manual: false });
+  if (t.aba) { aba = t.aba; render(); }
+  if (t.tour) { cfg.tour = true; $('fTour').checked = true; iniciarTour(); }
+  return true;
+}
+
 function trocarTurno() {
   geracao++;
   T = TURNOS[cfg.turno];
@@ -1283,4 +1312,8 @@ sincronizarFiltros();
 atualizarBotaoSom();
 iniciarPresenca();
 aplicarLayout();
-atualizar().then(() => { if (cfg.tour) iniciarTour(); });
+atualizar().then(() => {
+  const voltou = restaurarEstadoTela();
+  if (cfg.tour && !voltou) iniciarTour();
+});
+vigiarVersao();
