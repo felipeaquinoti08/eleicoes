@@ -911,14 +911,18 @@ function renderEstatisticas(d, r) {
 }
 
 function item(chave, nome, icone, d, s) { return { chave, nome, icone, d, r: resumo(d), s }; }
+const itemExterior = () => item('ZZ', 'Exterior', '<span class="selo-uf selo-zz">🌍</span>', agregar([...cidades.values()]), { tipo: 'mundo' });
 
 function itensRanking() {
   let itens = [];
   if (aba === 'ufs') {
     const lista = sel.tipo === 'regiao' ? REGIOES[sel.id][1] : UFS;
     itens = lista.map(uf => item(uf, UF_NOMES[uf], seloUF(uf), dadosUF(uf), { tipo: 'uf', id: uf }));
+    // no Total, o exterior entra na comparação como mais um "estado" (no TSE ele é a UF ZZ)
+    if (sel.tipo === 'total') itens.push(itemExterior());
   } else if (aba === 'regioes') {
     itens = Object.entries(REGIOES).map(([k, [n, l]]) => item(k, n, '', somaUFs(l), { tipo: 'regiao', id: k }));
+    if (sel.tipo === 'total') itens.push(itemExterior());
   } else if (aba === 'municipios') {
     const uf = ufEmFoco();
     const dados = munDados[uf] || {};
@@ -966,7 +970,7 @@ function ordenar(itens) {
 
 function abasDaSelecao() {
   switch (sel.tipo) {
-    case 'total': return [['ufs', 'Estados'], ['regioes', 'Regiões'], ['paises', 'Exterior']];
+    case 'total': return [['ufs', 'Estados e exterior'], ['regioes', 'Regiões e exterior'], ['paises', 'Países do exterior']];
     case 'brasil': return [['ufs', 'Estados'], ['regioes', 'Regiões']];
     case 'regiao': return [['ufs', 'Estados']];
     case 'uf': case 'municipio': return [['municipios', 'Municípios']];

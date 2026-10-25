@@ -320,3 +320,5 @@ body.vertical .acoes { position: absolute; right: 12px; top: 8px; }
   .nd-linha { grid-template-columns: 1fr auto; }
   .nd-linha .nd-placar { grid-column: 1 / -1; }
 }
+
+.selo-uf.selo-zz { background: #38bdf8; }
