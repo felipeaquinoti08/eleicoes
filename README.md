@@ -93,6 +93,23 @@ docker compose logs -f painel                      # acompanha a sincronização
 docker inspect --format "{{.State.Health.Status}}" apuracao-eleicoes   # healthy quando o servidor responde
 ```
 
+### Variáveis (em `docker-compose.yml`)
+
+| Variável | Padrão | Uso |
+|---|---|---|
+| `SYNC_BRASIL_S` | `30` | De quantos em quantos segundos conferir se o TSE publicou dados novos do Brasil e do governador. As UFs só são baixadas quando há novidade |
+| `SYNC_INTERVALO_MIN` | `5` | Intervalo da coleta dos boletins de urna do exterior |
+| `TURNOS` | `2,1` | Turnos sincronizados (o 1º turno, já encerrado, a cada 60 min) |
+| `TURNOS_MUN` | `2,1` | Turnos com resultado por município |
+| `GOVERNADOR` | `1` | `0` desliga a coleta do 2º turno para governador |
+| `CACHE_DADOS_S` | `15` | `max-age`/`s-maxage` dos snapshots (cache do Cloudflare e do navegador) |
+| `CONCORRENCIA` | `4` | Downloads simultâneos ao TSE. Se o `/saude` mostrar muitos 429, baixe para 2 |
+| `PORTA` | `8080` | Porta do servidor dentro do container |
+| `HISTORICO` | `1` | `0` desliga o download do histórico |
+| `HISTORICO_QTD` | `20` | Quantas eleições entram no histórico |
+
+No `.env`: `NPM_REDE` (rede do Nginx Proxy Manager, obrigatória) e `DADOS` (opcional, pasta absoluta para os dados no lugar do volume).
+
 ### Dados persistentes entre deploys
 
 Os resultados coletados ficam no **volume Docker `<projeto>_dados`** (com `-p eleicoes`, o volume `eleicoes_dados`). O volume sobrevive a `git pull`, rebuild e redeploy, e o servidor entrega o que já está nele assim que sobe. Ao iniciar, o log mostra o que está sendo servido:
@@ -201,6 +218,7 @@ public/            site estático (index.html, historico.html, app.js, bu.js, so
   municipios.js    municípios (código TSE -> UF, nome, código IBGE, capital)
 server/sync.js     job de sincronização com o TSE
 server/projecao.js  projeção do 2º turno a partir do 1º turno
+server/governador.js coleta do 2º turno para governador
 server/historico.js job do histórico (últimas 20 eleições)
 server/server.js   servidor HTTP (site + snapshots + /saude)
 iniciar.ps1        roda tudo localmente com Node portátil
