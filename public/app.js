@@ -863,6 +863,7 @@ function render() {
   renderEstatisticas(d, r);
   renderMapa();
   renderRanking();
+  $('cargosUF').innerHTML = htmlOutrosCargos();
   renderTicker();
   renderLegenda();
   $('selo').innerHTML = sel.tipo === 'total' ? '' :
@@ -886,7 +887,8 @@ function imgFoto(c) { return `<span class="foto" data-ini="${esc(iniciais(c.nome
 function renderPlacar(d, r) {
   const el = $('placar');
   if (cands.length === 2) {
-    const [a, b] = [...cands].map(c => r.lista.find(x => x.n === c.n));
+    // à esquerda sempre quem está na frente (r.lista já vem ordenada por votos)
+    const [a, b] = r.lista.slice(0, 2);
     const lado = (c, cls) => `
       <div class="duelo-cand ${cls} ${r.lider && r.lider.n === c.n ? 'lider' : ''}" style="--cor:${c.cor}">
         ${imgFoto(c)}
@@ -926,7 +928,7 @@ function htmlProjecao() {
   if (!e) return '';
   const topo = '<div class="proj-topo"><b>PROJEÇÃO</b> <span class="proj-exp">experimental</span><button class="proj-ajuda" onclick="mostrarMetodo()">como calculamos</button></div>';
   if (!e.p) return `<div class="projecao">${topo}<div class="proj-indef">${esc(projecao.motivo || 'sem dados suficientes para este local')}</div></div>`;
-  const [a, b] = cands.map(c => ({ ...c, pct: e.p.pct[c.n], faixa: e.p.faixa[c.n] }));
+  const [a, b] = cands.map(c => ({ ...c, pct: e.p.pct[c.n], faixa: e.p.faixa[c.n] })).sort((x, y) => y.pct - x.pct); // quem está na frente à esquerda
   const venc = e.p.vencedor ? cands.find(c => String(c.n) === String(e.p.vencedor)) : null;
   const [lo, hi] = a.faixa;
   return `<div class="projecao">${topo}
@@ -961,7 +963,7 @@ function renderEstatisticas(d, r) {
       ? `<div class="est brasil"><span>TSE oficial · total do país (${pct(rb.pctSec)} das seções)</span><b>${rb.lista.slice(0, 2).map(c => `<em style="color:${c.cor}">${esc(c.nome)} ${pct(c.pct)}</em>`).join(' × ')}</b></div>`
       : `<div class="est brasil"><span>TSE oficial · total do país</span><b><small>aguardando divulgação (a partir das 17h de Brasília)</small></b></div>`;
   }
-  $('estatisticas').innerHTML = h + htmlOutrosCargos();
+  $('estatisticas').innerHTML = h;
 }
 
 function item(chave, nome, icone, d, s) { return { chave, nome, icone, d, r: resumo(d), s }; }

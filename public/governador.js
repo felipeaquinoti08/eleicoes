@@ -68,11 +68,13 @@ function renderGov() {
   $('ultimaAtual').textContent = `${fmt(d?.secRec)} de ${fmt(d?.secTot)} seções${uf ? '' : ' nos ' + govUFs().length + ' estados'} · atualizado ${hora}`;
 
   // trilha
-  const partes = [{ s: { tipo: 'govs' }, nome: 'Governadores' }];
+  // sem seletor de cargo: a trilha começa com o caminho de volta para o Presidente (no mesmo estado, se houver)
+  const voltar = { acao: () => (uf ? abrirPresidente(uf) : trocarCargo('presidente')), nome: '← Presidente' };
+  const partes = [voltar, { s: { tipo: 'govs' }, nome: 'Governadores' }];
   if (uf) partes.push({ s: { tipo: 'uf', id: uf }, nome: seloUF(uf) + esc(UF_NOMES[uf]) });
   if (sel.tipo === 'municipio') partes.push({ s: sel, nome: esc(MUNICIPIOS[sel.id][1]) });
   $('trilha').innerHTML = partes.map((p, i) => `<button data-i="${i}" class="${i === partes.length - 1 ? 'atual' : ''}">${p.nome}</button>`).join('<span>›</span>');
-  $('trilha').querySelectorAll('button').forEach(b => b.onclick = () => selecionar(partes[+b.dataset.i].s));
+  $('trilha').querySelectorAll('button').forEach(b => b.onclick = () => { const p = partes[+b.dataset.i]; p.acao ? p.acao() : selecionar(p.s); });
 
   // chips: todos + cada estado
   const chips = [[{ tipo: 'govs' }, 'Todos os estados'], ...govUFs().map(u => [{ tipo: 'uf', id: u }, UF_NOMES[u]])];
@@ -84,6 +86,7 @@ function renderGov() {
   renderEstatisticasGov(d, r);
   renderMapaGov();
   renderRankingGov(uf);
+  $('cargosUF').innerHTML = htmlOutrosCargos();
   renderTickerGov();
   renderLegendaGov(uf);
   $('selo').innerHTML = `<div>${uf ? seloUF(uf) : ''}${esc(nome)}</div><small>${d?.comp ? fmt(d.comp) + ' votantes · ' + pct(pctSec) + ' das seções' : 'sem votos apurados'}</small>`;
@@ -99,8 +102,8 @@ function dueloHTML(r) {
       <div class="info"><div class="nome">${esc(c.nome)}</div><div class="partido">${esc(c.n)} · ${esc(c.partido)}</div>
         <div class="pct">${pct(c.pct, 2)}</div><div class="votos">${fmt(c.votos)} votos</div></div>
     </div>`;
-  // mantém a ordem pelo número do candidato para os lados não trocarem durante a apuração
-  const [e, dir] = [a, b].sort((x, y) => x.n - y.n);
+  // à esquerda sempre quem está na frente (r.lista já vem ordenada por votos)
+  const [e, dir] = [a, b];
   const tot = e.votos + dir.votos, pe = tot ? 100 * e.votos / tot : 50;
   return `<div class="duelo-lados">${lado(e, 'esq')}<div class="vs">×</div>${lado(dir, 'dir')}</div>
     <div class="duelo-barra"><div style="width:${pe}%;background:${e.cor}"></div><div style="width:${100 - pe}%;background:${dir.cor}"></div><i></i></div>`;
@@ -130,7 +133,7 @@ function renderEstatisticasGov(d, r) {
   ];
   if (r.validos != null) itens.push(['Válidos', fmt(r.validos)]);
   itens.push(['Brancos', fmt(d?.brancos)], ['Nulos', fmt(d?.nulos)]);
-  $('estatisticas').innerHTML = itens.map(([k, v]) => `<div class="est"><span>${k}</span><b>${v}</b></div>`).join('') + htmlOutrosCargos();
+  $('estatisticas').innerHTML = itens.map(([k, v]) => `<div class="est"><span>${k}</span><b>${v}</b></div>`).join('');
 }
 
 function corGov(r) {
@@ -247,6 +250,9 @@ function renderLegendaGov(uf) {
 function renderCargos() {
   const el = $('cargos');
   if (!el) return;
+  // seletor Presidente | Governador desativado: os outros cargos aparecem na coluna da direita ao escolher um estado
+  el.classList.add('oculto');
+  return;
   const disponivel = cfg.turno === '2' && gov && Object.keys(gov.ufs || {}).length;
   el.classList.toggle('oculto', !disponivel);
   if (!disponivel) return;

@@ -36,19 +36,14 @@ function badgeOC(c) {
   return '';
 }
 
-function linhasOC(cands, n) {
-  return cands.slice(0, n).map(c => `<div class="oc-linha">
-      <span class="oc-nome"><i style="background:${corPartidoOC(c.partido)}"></i>${esc(c.nome)} <small>${esc(c.partido)}</small>${badgeOC(c)}</span>
-      <b>${pct(c.pct)}</b></div>`).join('');
-}
-
 // card de um cargo do 1º turno (já totalizado)
 function cardCargo1T(cargo, uf) {
   const l = cargo.locais.find(x => x.uf === uf && !x.mun);
   if (!l) return '';
   const titulo = `${esc(cargo.nome)} <small>1º turno</small>`;
   if (!cargo.proporcional) {
-    return `<div class="oc-card"><div class="oc-topo"><b>${titulo}</b>${linkHistorico(cargo.cd, uf)}</div>${linhasOC(l.cands, cargo.cd === 5 ? 4 : 3)}</div>`;
+    const lista = l.cands.slice(0, cargo.cd === 5 ? 4 : 3).map(c => ({ ...c, cor: corPartidoOC(c.partido) }));
+    return `<div class="oc-card"><div class="oc-topo"><b>${titulo}</b>${linkHistorico(cargo.cd, uf)}</div>${lista.map(candidatoComFoto).join('')}</div>`;
   }
   const eleitos = l.cands.filter(c => c.eleito);
   const partidos = (l.partidos || []).slice(0, 4);
@@ -79,12 +74,13 @@ function cardGov2T(uf) {
     <div class="oc-sub">${fmt(d?.secRec)}/${fmt(d?.secTot)} seções (${pct(r.pctSec)})</div></button>`;
 }
 
-// linha de candidato com foto (iniciais se a foto não carregar), nome, partido, % e barra
+// linha compacta de candidato: foto (ou iniciais, quando não há foto), nome, partido, situação, % e barra
 function candidatoComFoto(c) {
-  return `<div class="oc-cand" style="--cor:${c.cor}">${imgFoto(c)}
-    <div class="oc-cand-info"><div class="oc-linha"><span class="oc-nome">${esc(c.nome)} <small>${esc(c.n)} · ${esc(c.partido)}</small></span><b>${pct(c.pct)}</b></div>
+  const foto = c.sq ? imgFoto(c) : `<span class="foto" data-ini="${esc(iniciais(c.nome))}"></span>`;
+  return `<div class="oc-cand" style="--cor:${c.cor}">${foto}
+    <div class="oc-cand-info"><div class="oc-linha"><span class="oc-nome">${esc(c.nome)}</span><b>${pct(c.pct)}</b></div>
       <div class="gm-trilho"><div style="width:${c.pct}%;background:${c.cor}"></div></div>
-      <div class="oc-votos">${fmt(c.votos)} votos</div></div></div>`;
+      <div class="oc-votos">${c.n ? esc(c.n) + ' · ' : ''}${esc(c.partido)} · ${fmt(c.votos)} votos${badgeOC(c)}</div></div></div>`;
 }
 
 // presidente no estado (aparece no modo Governador)
@@ -103,7 +99,7 @@ function htmlOutrosCargos() {
   const uf = ufDoContexto();
   if (!uf) {
     return ['total', 'brasil', 'regiao'].includes(sel.tipo) || sel.tipo === 'govs'
-      ? '<div class="oc-dica">Clique num estado para ver também governador, senador e deputados.</div>' : '';
+      ? '<div class="oc-dica">Clique num estado para ver aqui os candidatos a governador, senador e deputado.</div>' : '';
   }
   carregarEstadual1T();
   const blocos = [];
@@ -120,7 +116,7 @@ function htmlOutrosCargos() {
   }
   const html = blocos.filter(Boolean).join('');
   if (!html) return '';
-  return `<div class="outros-cargos"><div class="oc-titulo">Outros cargos em ${seloUF(uf)}${esc(UF_NOMES[uf])}</div>${html}</div>`;
+  return `<div class="outros-cargos"><div class="oc-titulo">Candidatos em ${seloUF(uf)}${esc(UF_NOMES[uf])}</div>${html}</div>`;
 }
 
 function abrirGovernador(uf) {

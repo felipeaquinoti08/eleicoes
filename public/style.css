@@ -376,3 +376,20 @@ body.vertical .outros-cargos, body.vertical .oc-dica { display: none; }
 .oc-cand .oc-linha { font-size: 14px; }
 .oc-cand .oc-linha b { color: var(--cor); font-size: 16px; }
 .oc-votos { color: var(--suave); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+/* ---------- candidatos do estado na coluna da direita ---------- */
+#ranking { overflow-y: auto; }
+#rankingLista { overflow: visible; flex: none; }
+#cargosUF:empty { display: none; }
+#cargosUF { padding: 8px 8px 0; }
+#cargosUF .outros-cargos { margin-top: 0; }
+#cargosUF .oc-dica { padding: 6px 4px 0; }
+#cargosUF .oc-card { padding: 6px 8px; }
+#cargosUF .oc-cand { grid-template-columns: 36px 1fr; gap: 7px; padding: 2px 0; }
+#cargosUF .oc-cand .foto { width: 36px; height: 36px; font-size: 12px; }
+#cargosUF .oc-cand .oc-linha { font-size: 13px; }
+#cargosUF .oc-cand .oc-linha b { font-size: 14px; }
+#cargosUF .oc-votos { font-size: 10.5px; }
+#cargosUF .gm-trilho { margin: 2px 0 1px; height: 4px; }
+.foto:not(:has(img))::before { font-size: 13px; }
+body.vertical #cargosUF { display: none; }
