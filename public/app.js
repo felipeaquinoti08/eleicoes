@@ -11,17 +11,36 @@ const CORES_FIXAS = {
 };
 const PALETA_EXTRA = ['#14b8a6', '#8b5cf6', '#f59e0b', '#0ea5e9', '#84cc16', '#ef4444'];
 
+const UF_NOMES = {
+  AC: 'Acre', AL: 'Alagoas', AM: 'Amazonas', AP: 'Amapá', BA: 'Bahia', CE: 'Ceará', DF: 'Distrito Federal',
+  ES: 'Espírito Santo', GO: 'Goiás', MA: 'Maranhão', MG: 'Minas Gerais', MS: 'Mato Grosso do Sul', MT: 'Mato Grosso',
+  PA: 'Pará', PB: 'Paraíba', PE: 'Pernambuco', PI: 'Piauí', PR: 'Paraná', RJ: 'Rio de Janeiro', RN: 'Rio Grande do Norte',
+  RO: 'Rondônia', RR: 'Roraima', RS: 'Rio Grande do Sul', SC: 'Santa Catarina', SE: 'Sergipe', SP: 'São Paulo', TO: 'Tocantins',
+};
+const REGIOES = {
+  N: ['Norte', ['AC', 'AM', 'AP', 'PA', 'RO', 'RR', 'TO']],
+  NE: ['Nordeste', ['AL', 'BA', 'CE', 'MA', 'PB', 'PE', 'PI', 'RN', 'SE']],
+  CO: ['Centro-Oeste', ['DF', 'GO', 'MS', 'MT']],
+  SE: ['Sudeste', ['ES', 'MG', 'RJ', 'SP']],
+  S: ['Sul', ['PR', 'RS', 'SC']],
+};
+const UFS = Object.keys(UF_NOMES);
+const REGIAO_DA_UF = Object.fromEntries(Object.entries(REGIOES).flatMap(([r, [, l]]) => l.map(uf => [uf, r])));
+const IBGE_PARA_TSE = Object.fromEntries(Object.entries(MUNICIPIOS).map(([cd, m]) => [m[2], cd]));
+
 const pad = (v, n) => String(v).padStart(n, '0');
 const fmt = n => (n || 0).toLocaleString('pt-BR');
 const pct = (x, casas = 1) => (isFinite(x) ? x : 0).toLocaleString('pt-BR', { minimumFractionDigits: casas, maximumFractionDigits: casas }) + '%';
 const $ = id => document.getElementById(id);
 const bandeira = iso => iso ? `<img class="flag" src="https://flagcdn.com/w40/${iso.toLowerCase()}.png" alt="" onerror="this.remove()">` : '';
+const seloUF = uf => `<span class="selo-uf">${uf}</span>`;
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const espera = ms => new Promise(r => setTimeout(r, ms));
 
 // ---------------------------------------------------------------- configuração
 const PADRAO = {
   turno: '2', fonte: 'auto', destaque: 'vencedor', ordem: 'comp', soComVotos: true, cidades: true,
-  rotulos: true, brasil: true, vertical: false, tour: false, tourSeg: '8', intervalo: '60',
+  rotulos: true, brasil: true, vertical: false, tour: false, tourSeg: '8', intervalo: '60', som: true,
 };
 const cfg = Object.assign({}, PADRAO, JSON.parse(localStorage.getItem('cfg-apuracao') || '{}'));
 const salvarCfg = () => localStorage.setItem('cfg-apuracao', JSON.stringify(cfg));
@@ -30,14 +49,17 @@ const salvarCfg = () => localStorage.setItem('cfg-apuracao', JSON.stringify(cfg)
 let T = TURNOS[cfg.turno];
 let cands = [];               // [{n, nome, partido, sq, cor}]
 let candSet = new Set();
-let cidades = new Map();      // mun -> {cd, nome, iso, cont, lat, lon, secoes:[], bu:{}, of:null}
+let cidades = new Map();      // exterior: mun -> {cd, nome, iso, cont, lat, lon, secoes:[], bu:{}, of:null}
+let ufs = {};                 // UF -> totalização oficial
+let munDados = {};            // UF -> {codTSE -> totalização oficial}
 let ofExterior = null, brasil = null;
 let cacheBU = {};
-let sel = { tipo: 'mundo', id: null };
-let aba = 'paises';
+let sel = { tipo: 'total' };
+let aba = 'ufs';
 let atualizando = false, ultimaAtualizacao = null, timerAtual = null, timerTour = null, tourIdx = 0;
 let pendentesBU = 0;
 let geracao = 0; // incrementa a cada troca de turno para descartar downloads antigos
+let assinaturaAnterior = null;
 
 function chaveCache() { return 'bu-' + T.pleito; }
 function carregarCache() {
@@ -59,7 +81,6 @@ function iniciarCidades() {
 }
 
 // ---------------------------------------------------------------- rede
-const espera = ms => new Promise(r => setTimeout(r, ms));
 // O CDN do TSE devolve 429/5xx de forma intermitente em dia de eleição: tenta de novo com espera crescente.
 async function baixar(url, tentativas = 6) {
   for (let i = 0; ; i++) {
@@ -99,12 +120,6 @@ function oficialDe(j) {
   };
 }
 
-async function carregarCandidatos() {
-  const j = await getJSON(`${BASE}/${T.ele}/dados/zz/zz-c0001-e${pad(T.ele, 6)}-u.json`);
-  ofExterior = oficialDe(j);
-  definirCandidatos(candidatosDe(j));
-}
-
 function definirCandidatos(lista) {
   if (cands.length) return;
   let extra = 0;
@@ -123,6 +138,7 @@ async function carregarSnapshot() {
   definirCandidatos(snap.candidatos);
   ofExterior = snap.ofExterior;
   brasil = snap.brasil;
+  ufs = snap.ufs || {};
   for (const [cd, sc] of Object.entries(snap.cidades)) {
     let c = cidades.get(cd);
     if (!c) { c = { cd, nome: sc.nome, iso: null, cont: null, lat: null, lon: null }; cidades.set(cd, c); }
@@ -132,9 +148,23 @@ async function carregarSnapshot() {
   return true;
 }
 
+// ---------------------------------------------------------------- modo direto (sem servidor)
+async function carregarCandidatos() {
+  const j = await getJSON(`${BASE}/${T.ele}/dados/zz/zz-c0001-e${pad(T.ele, 6)}-u.json`);
+  ofExterior = oficialDe(j);
+  definirCandidatos(candidatosDe(j));
+}
+
 async function carregarBrasil() {
   try { brasil = oficialDe(await getJSON(`${BASE}/${T.ele}/dados/br/br-c0001-e${pad(T.ele, 6)}-u.json`)); }
-  catch { brasil = null; }
+  catch { /* mantém o anterior */ }
+}
+
+async function carregarUFs() {
+  await emParalelo(UFS, 6, async uf => {
+    const u = uf.toLowerCase();
+    ufs[uf] = oficialDe(await getJSON(`${BASE}/${T.ele}/dados/${u}/${u}-c0001-e${pad(T.ele, 6)}-u.json`));
+  });
 }
 
 async function carregarSecoes() {
@@ -164,8 +194,7 @@ async function baixarBU(c, s) {
   if (g !== geracao) return;
   if (!h) { cacheBU[chave] = { q: s.quando, r: null }; return; }
   const nm = h.arq.find(a => a.tp === 'bu').nm;
-  const r = await baixar(`${dir}/${h.hash}/${nm}`);
-  const buf = await r.arrayBuffer();
+  const buf = await (await baixar(`${dir}/${h.hash}/${nm}`)).arrayBuffer();
   if (g !== geracao) return;
   const res = BU.decodificar(buf, T.ele, 1);
   cacheBU[chave] = { q: s.quando, r: res };
@@ -198,36 +227,73 @@ async function carregarOficiaisCidades() {
   });
 }
 
+// municípios de uma UF: no servidor vêm prontos; no modo direto, baixa só os que mudaram
+const versaoMun = {};
+async function carregarMunicipiosUF(uf) {
+  if (modoServidor) {
+    const r = await fetch(`dados/turno-${cfg.turno}-mun-${uf}.json`, { cache: 'no-cache' });
+    if (r.ok) munDados[uf] = (await r.json()).municipios;
+    return;
+  }
+  const u = uf.toLowerCase();
+  const ab = await getJSON(`${BASE}/${T.ele}/dados/${u}/${u}-e${pad(T.ele, 6)}-ab.json`);
+  const dados = (munDados[uf] ||= {});
+  const fila = [];
+  for (const a of ab.abr || []) {
+    if (a.tpabr !== 'mun' || !(+a.s?.st > 0)) continue;
+    const v = `${a.s.st}|${a.dt} ${a.ht}|${a.e?.c}`;
+    if (versaoMun[a.cdabr] !== v) fila.push([a.cdabr, v]);
+  }
+  await emParalelo(fila, 6, async ([cd, v]) => {
+    dados[cd] = oficialDe(await getJSON(`${BASE}/${T.ele}/dados/${u}/${u}${cd}-c0001-e${pad(T.ele, 6)}-u.json`));
+    versaoMun[cd] = v;
+    agendarRender();
+  });
+}
+
+function ufEmFoco() {
+  if (sel.tipo === 'uf') return sel.id;
+  if (sel.tipo === 'municipio') return MUNICIPIOS[sel.id][0];
+  return null;
+}
+
 async function atualizar() {
   if (atualizando) return;
   atualizando = true;
   status('Atualizando…');
+  let ok = true;
   try {
     if (modoServidor === null) {
       try { modoServidor = (await (await fetch('saude', { cache: 'no-store' })).json()).ok === true; } catch { modoServidor = false; }
     }
     if (modoServidor) {
-      let ok = false;
-      try { ok = await carregarSnapshot(); } catch (e) { console.warn(e); }
+      try { ok = await carregarSnapshot(); } catch (e) { ok = false; console.warn(e); }
+      const uf = ufEmFoco();
+      if (uf) await carregarMunicipiosUF(uf).catch(e => console.warn(e));
       status(ok ? '' : 'Servidor ainda sincronizando com o TSE…');
       return;
     }
     // sem servidor de sincronização: consulta o TSE direto do navegador
     await carregarCandidatos();
+    await Promise.all([carregarUFs(), cfg.brasil ? carregarBrasil() : null]);
+    agendarRender();
     await carregarSecoes();
     const tarefas = [];
     if (cfg.fonte !== 'oficial') tarefas.push(carregarBUs());
     if (cfg.fonte !== 'bu') tarefas.push(carregarOficiaisCidades());
-    if (cfg.brasil) tarefas.push(carregarBrasil());
+    const uf = ufEmFoco();
+    if (uf) tarefas.push(carregarMunicipiosUF(uf));
     await Promise.all(tarefas);
     ultimaAtualizacao = new Date();
     status('');
   } catch (e) {
+    ok = false;
     console.error(e);
     status('Falha ao atualizar: ' + e.message);
   } finally {
     atualizando = false;
     render();
+    if (ok) avisarNovosDados();
     programarAtualizacao();
   }
 }
@@ -237,6 +303,19 @@ function programarAtualizacao() {
   if (s > 0) timerAtual = setTimeout(atualizar, s * 1000);
 }
 function status(msg) { $('statusCarga').textContent = msg; }
+
+// toca o bipe e pisca o aviso quando a apuração avançou desde a última atualização
+function avisarNovosDados() {
+  if (!cands.length) return;
+  const d = agregarSel({ tipo: 'total' });
+  const assinatura = `${cfg.turno}|${d.secRec}|${d.comp}|${Object.values(d.votos).join(',')}`;
+  const mudou = assinaturaAnterior !== null && assinatura !== assinaturaAnterior && d.comp > 0;
+  assinaturaAnterior = assinatura;
+  if (!mudou) return;
+  const el = $('novosDados');
+  el.classList.remove('mostrar'); void el.offsetWidth; el.classList.add('mostrar');
+  if (cfg.som) Som.tocar();
+}
 
 // ---------------------------------------------------------------- agregação
 function vazio() { return { secTot: 0, secRec: 0, aptos: 0, comp: 0, votos: {}, brancos: 0, nulos: 0, nCid: 0, nCidVotos: 0 }; }
@@ -261,7 +340,6 @@ function dadosBU(c) {
 function dadosCidade(c) {
   const bu = cfg.fonte !== 'oficial' ? dadosBU(c) : null;
   const of = cfg.fonte !== 'bu' && c.of ? somar(vazio(), c.of) : null;
-  if (of) { of.secTot = c.of.secTot; of.secRec = c.of.secRec; }
   let d = bu || vazio();
   if (of && (!bu || of.secRec >= bu.secRec)) d = of;
   if (!d.secTot) d.secTot = c.secoes.length;
@@ -273,6 +351,26 @@ function agregar(lista) {
   const acc = vazio();
   for (const c of lista) { const d = dadosCidade(c); somar(acc, d); acc.nCid++; acc.nCidVotos += d.nCidVotos; }
   return acc;
+}
+
+const dadosUF = uf => ufs[uf] ? somar(vazio(), ufs[uf]) : vazio();
+function dadosMun(cd) {
+  const o = munDados[MUNICIPIOS[cd]?.[0]]?.[cd];
+  return o ? somar(vazio(), o) : vazio();
+}
+function somaUFs(lista) { const acc = vazio(); for (const uf of lista) somar(acc, dadosUF(uf)); return acc; }
+
+const ehExterior = s => ['mundo', 'continente', 'pais', 'cidade'].includes(s.tipo);
+
+function agregarSel(s) {
+  switch (s.tipo) {
+    case 'total': return somar(somaUFs(UFS), agregar([...cidades.values()]));
+    case 'brasil': return somaUFs(UFS);
+    case 'regiao': return somaUFs(REGIOES[s.id][1]);
+    case 'uf': return dadosUF(s.id);
+    case 'municipio': return dadosMun(s.id);
+    default: return agregar(cidadesDa(s));
+  }
 }
 
 function resumo(d) {
@@ -289,23 +387,50 @@ function cidadesDa(s) {
   if (s.tipo === 'continente') return todas.filter(c => c.cont === s.id);
   if (s.tipo === 'pais') return todas.filter(c => c.iso === s.id);
   if (s.tipo === 'cidade') return todas.filter(c => c.cd === s.id);
-  return todas;
+  if (s.tipo === 'mundo' || s.tipo === 'total') return todas;
+  return [];
 }
 
 function nomeSel(s) {
-  if (s.tipo === 'continente') return CONTINENTES[s.id];
-  if (s.tipo === 'pais') return PAISES[s.id]?.[0] || s.id;
-  if (s.tipo === 'cidade') return cidades.get(s.id)?.nome || s.id;
-  return 'Todo o exterior';
+  switch (s.tipo) {
+    case 'total': return 'Brasil + exterior';
+    case 'brasil': return 'Brasil';
+    case 'regiao': return 'Região ' + REGIOES[s.id][0];
+    case 'uf': return UF_NOMES[s.id];
+    case 'municipio': return `${MUNICIPIOS[s.id][1]} (${MUNICIPIOS[s.id][0]})`;
+    case 'mundo': return 'Exterior';
+    case 'continente': return CONTINENTES[s.id];
+    case 'pais': return PAISES[s.id]?.[0] || s.id;
+    case 'cidade': return cidades.get(s.id)?.nome || s.id;
+  }
+  return '';
+}
+function iconeSel(s) {
+  if (s.tipo === 'pais') return bandeira(s.id);
+  if (s.tipo === 'cidade') return bandeira(cidades.get(s.id)?.iso);
+  if (s.tipo === 'uf') return seloUF(s.id);
+  if (s.tipo === 'municipio') return seloUF(MUNICIPIOS[s.id][0]);
+  if (['total', 'brasil', 'regiao'].includes(s.tipo)) return bandeira('BR');
+  return '';
 }
 
 // ---------------------------------------------------------------- mapa
 const mapa = L.map('mapa', { zoomControl: false, worldCopyJump: true, minZoom: 2, zoomSnap: 0.25, attributionControl: true })
-  .setView([20, 10], 2);
-mapa.attributionControl.setPrefix(false).addAttribution('Mapa: Natural Earth · Dados: TSE');
+  .setView([-14, -52], 4);
+mapa.attributionControl.setPrefix(false).addAttribution('Mapas: IBGE, Natural Earth · Dados: TSE');
 L.geoJSON(MUNDO_GEO, { interactive: false, style: { weight: 0.5, color: '#2a3550', fillColor: '#151d33', fillOpacity: 1 } }).addTo(mapa);
+mapa.createPane('munPane').style.zIndex = 410;
+mapa.createPane('ufPane').style.zIndex = 420;
 mapa.createPane('cidadesPane').style.zIndex = 450;
 
+function corPara(r) {
+  if (!r.validos) return null;
+  if (cfg.destaque === 'vencedor') return { cor: r.lider.cor, op: 0.3 + 0.6 * Math.min(1, r.margem / 40) };
+  const c = r.lista.find(x => String(x.n) === cfg.destaque);
+  return { cor: c.cor, op: 0.08 + 0.85 * (c.pct / 100) };
+}
+
+// --- exterior: países e cidades
 const camadaPaises = L.geoJSON(PAISES_GEO, {
   style: () => ({ weight: 0.6, color: '#3b4252', fillOpacity: 0, fillColor: '#000' }),
   onEachFeature: (f, layer) => {
@@ -314,17 +439,42 @@ const camadaPaises = L.geoJSON(PAISES_GEO, {
     layer.on('mouseout', () => estilizarPais(layer));
   },
 }).addTo(mapa);
-
-const marcadores = new Map(); // mun -> circleMarker
+const marcadores = new Map();
 const camadaCidades = L.layerGroup().addTo(mapa);
 
-function corPara(d, r) {
-  if (!r.validos) return null;
-  if (cfg.destaque === 'vencedor') {
-    return { cor: r.lider.cor, op: 0.3 + 0.6 * Math.min(1, r.margem / 40) };
-  }
-  const c = r.lista.find(x => String(x.n) === cfg.destaque);
-  return { cor: c.cor, op: 0.08 + 0.85 * (c.pct / 100) };
+// --- Brasil: UFs e municípios
+let camadaUFs = null;
+fetch('geo/ufs.json').then(r => r.json()).then(geo => {
+  camadaUFs = L.geoJSON(geo, {
+    pane: 'ufPane',
+    onEachFeature: (f, layer) => {
+      layer.on('click', () => selecionar({ tipo: 'uf', id: f.properties.uf }));
+      layer.on('mouseover', () => layer.setStyle({ weight: 2.5, color: '#fff' }));
+      layer.on('mouseout', () => estilizarUF(layer));
+    },
+  }).addTo(mapa);
+  render();
+});
+let camadaMun = null, ufCamadaMun = null;
+const geoMunCache = {};
+async function mostrarMunicipios(uf) {
+  if (ufCamadaMun === uf) return;
+  if (camadaMun) { mapa.removeLayer(camadaMun); camadaMun = null; }
+  ufCamadaMun = uf;
+  if (!uf) return;
+  const geo = geoMunCache[uf] ||= await (await fetch(`geo/mun-${uf}.json`)).json();
+  if (ufCamadaMun !== uf) return;
+  camadaMun = L.geoJSON(geo, {
+    pane: 'munPane',
+    onEachFeature: (f, layer) => {
+      const cd = IBGE_PARA_TSE[f.properties.ibge];
+      if (!cd) return;
+      layer.on('click', () => selecionar({ tipo: 'municipio', id: cd }));
+      layer.on('mouseover', () => layer.setStyle({ weight: 2, color: '#fff' }));
+      layer.on('mouseout', () => estilizarMun(layer));
+    },
+  }).addTo(mapa);
+  renderMapa();
 }
 
 let dadosPaisCache = {};
@@ -332,9 +482,9 @@ function estilizarPais(layer) {
   const iso = layer.feature.properties.iso;
   const info = dadosPaisCache[iso];
   const selecionado = sel.tipo === 'pais' && sel.id === iso;
-  const visivel = sel.tipo === 'mundo' || sel.tipo === 'pais' || (sel.tipo === 'continente' && PAISES[iso]?.[1] === sel.id) ||
-    (sel.tipo === 'cidade' && cidades.get(sel.id)?.iso === iso);
-  const c = info && corPara(info.d, info.r);
+  const visivel = !ehExterior(sel) && sel.tipo !== 'total' ? false :
+    sel.tipo !== 'continente' || PAISES[iso]?.[1] === sel.id;
+  const c = info && corPara(info.r);
   layer.setStyle({
     weight: selecionado ? 2.5 : 0.6,
     color: selecionado ? '#ffffff' : '#4b5563',
@@ -344,7 +494,64 @@ function estilizarPais(layer) {
   if (selecionado) layer.bringToFront();
 }
 
+function estilizarUF(layer) {
+  const uf = layer.feature.properties.uf;
+  const r = resumo(dadosUF(uf));
+  const c = corPara(r);
+  const foco = ufEmFoco();
+  const naSel = sel.tipo === 'total' || sel.tipo === 'brasil' || (sel.tipo === 'regiao' && REGIAO_DA_UF[uf] === sel.id) || foco === uf;
+  layer.setStyle({
+    weight: foco === uf ? 3 : 1, color: foco === uf ? '#facc15' : '#0b1020',
+    fillColor: c ? c.cor : '#334155',
+    // com a UF aberta, os municípios aparecem por baixo: a UF fica só com a borda
+    fillOpacity: foco === uf ? 0 : (c ? c.op : 0.35) * (naSel ? 1 : 0.35),
+  });
+}
+
+function estilizarMun(layer) {
+  const cd = IBGE_PARA_TSE[layer.feature.properties.ibge];
+  const r = resumo(cd ? dadosMun(cd) : vazio());
+  const c = corPara(r);
+  const selec = sel.tipo === 'municipio' && sel.id === cd;
+  layer.setStyle({
+    weight: selec ? 3 : 0.4, color: selec ? '#facc15' : '#0b1020',
+    fillColor: c ? c.cor : '#334155', fillOpacity: c ? c.op : 0.3,
+  });
+  if (selec) layer.bringToFront();
+}
+
+function rotuloUF(uf, r) {
+  return r.validos ? `<b>${uf}</b> <span style="color:${r.lider.cor}">${pct(r.lider.pct, 0)}</span>` : `<b>${uf}</b>`;
+}
+
 function renderMapa() {
+  // Brasil
+  if (camadaUFs) {
+    const comRotulo = cfg.rotulos && ['total', 'brasil', 'regiao'].includes(sel.tipo);
+    camadaUFs.eachLayer(l => {
+      estilizarUF(l);
+      const uf = l.feature.properties.uf;
+      const d = dadosUF(uf), r = resumo(d);
+      l.unbindTooltip();
+      if (comRotulo && (sel.tipo !== 'regiao' || REGIAO_DA_UF[uf] === sel.id)) {
+        l.bindTooltip(rotuloUF(uf, r), { permanent: true, direction: 'center', className: 'rotulo rotulo-uf' });
+      } else {
+        l.bindTooltip(tooltipHTML(seloUF(uf) + esc(UF_NOMES[uf]), d, r), { sticky: true, className: 'tip' });
+      }
+    });
+  }
+  if (camadaMun) {
+    camadaMun.eachLayer(l => {
+      estilizarMun(l);
+      const cd = IBGE_PARA_TSE[l.feature.properties.ibge];
+      if (!cd) return;
+      const d = dadosMun(cd);
+      l.unbindTooltip();
+      l.bindTooltip(tooltipHTML(esc(MUNICIPIOS[cd][1]), d, resumo(d)), { sticky: true, className: 'tip' });
+    });
+  }
+
+  // exterior
   dadosPaisCache = {};
   const porPais = {};
   for (const c of cidades.values()) if (c.iso) (porPais[c.iso] ||= []).push(c);
@@ -354,13 +561,14 @@ function renderMapa() {
   }
   camadaPaises.eachLayer(l => {
     estilizarPais(l);
-    const info = dadosPaisCache[l.feature.properties.iso];
+    const iso = l.feature.properties.iso;
+    const info = dadosPaisCache[iso];
     l.unbindTooltip();
-    if (info) l.bindTooltip(tooltipHTML(PAISES[l.feature.properties.iso][0], l.feature.properties.iso, info.d, info.r), { sticky: true, className: 'tip' });
+    if (info) l.bindTooltip(tooltipHTML(bandeira(iso) + esc(PAISES[iso][0]), info.d, info.r), { sticky: true, className: 'tip' });
   });
 
-  // cidades
-  const mostrar = cfg.cidades;
+  const noExterior = ehExterior(sel);
+  const naSelecao = new Set(cidadesDa(sel).map(c => c.cd));
   const ranking = [];
   for (const c of cidades.values()) {
     if (c.lat == null) continue;
@@ -371,85 +579,111 @@ function renderMapa() {
       m.on('click', e => { L.DomEvent.stopPropagation(e); selecionar({ tipo: 'cidade', id: c.cd }); });
       marcadores.set(c.cd, m);
     }
-    const cor = corPara(d, r);
-    const naSel = cidadesDa(sel).includes(c);
-    const esconder = !mostrar || (cfg.soComVotos && !r.validos);
-    if (esconder) { camadaCidades.removeLayer(m); continue; }
+    if (!cfg.cidades || (cfg.soComVotos && !r.validos) || !(noExterior || sel.tipo === 'total')) { camadaCidades.removeLayer(m); continue; }
     camadaCidades.addLayer(m);
-    const raio = r.validos ? Math.min(28, 4 + Math.sqrt(d.comp) / 2.2) : 3;
-    m.setRadius(raio);
+    const cor = corPara(r);
+    const atual = sel.tipo === 'cidade' && sel.id === c.cd;
+    m.setRadius(r.validos ? Math.min(28, 4 + Math.sqrt(d.comp) / 2.2) : 3);
     m.setStyle({
       fillColor: cor ? cor.cor : '#6b7280', fillOpacity: cor ? 0.9 : 0.5,
-      opacity: naSel ? 1 : 0.3, color: sel.tipo === 'cidade' && sel.id === c.cd ? '#facc15' : '#fff',
-      weight: sel.tipo === 'cidade' && sel.id === c.cd ? 3 : 1.2,
+      opacity: naSelecao.has(c.cd) ? 1 : 0.3, color: atual ? '#facc15' : '#fff', weight: atual ? 3 : 1.2,
     });
     m.unbindTooltip();
     if (r.validos) ranking.push({ c, d, r, m });
-    else m.bindTooltip(tooltipHTML(c.nome, c.iso, d, r), { className: 'tip' });
+    else m.bindTooltip(tooltipHTML(bandeira(c.iso) + esc(c.nome), d, r), { className: 'tip' });
   }
-  // rótulos fixos para as maiores cidades da seleção
   ranking.sort((a, b) => b.d.comp - a.d.comp);
-  const nRotulos = cfg.rotulos ? (sel.tipo === 'mundo' ? 8 : 12) : 0;
+  const nRotulos = cfg.rotulos && noExterior ? (sel.tipo === 'mundo' ? 8 : 12) : 0;
   let rot = 0;
   for (const it of ranking) {
-    const naSel = cidadesDa(sel).includes(it.c);
-    if (naSel && rot < nRotulos) {
+    if (naSelecao.has(it.c.cd) && rot < nRotulos) {
       rot++;
       it.m.bindTooltip(`<b>${esc(it.c.nome)}</b> <span style="color:${it.r.lider.cor}">${esc(it.r.lider.nome)} ${pct(it.r.lider.pct, 0)}</span>`,
         { permanent: true, direction: 'top', offset: [0, -6], className: 'rotulo' });
     } else {
-      it.m.bindTooltip(tooltipHTML(it.c.nome, it.c.iso, it.d, it.r), { className: 'tip' });
+      it.m.bindTooltip(tooltipHTML(bandeira(it.c.iso) + esc(it.c.nome), it.d, it.r), { className: 'tip' });
     }
   }
 }
 
-function tooltipHTML(nome, iso, d, r) {
-  let h = `<div class="tip-titulo">${bandeira(iso)} ${esc(nome)}</div>`;
+function tooltipHTML(titulo, d, r) {
+  let h = `<div class="tip-titulo">${titulo}</div>`;
   if (!r.validos) return h + `<div class="tip-sem">Sem votos apurados · ${fmt(d.secRec)}/${fmt(d.secTot)} seções</div>`;
   for (const c of r.lista.slice(0, 4)) {
     h += `<div class="tip-linha"><i style="background:${c.cor}"></i>${esc(c.nome)} <b>${pct(c.pct)}</b> <small>${fmt(c.votos)}</small></div>`;
   }
-  return h + `<div class="tip-sem">${fmt(d.comp)} votantes · ${fmt(d.secRec)}/${fmt(d.secTot)} seções</div>`;
+  return h + `<div class="tip-sem">${fmt(d.comp)} votantes · ${fmt(d.secRec)}/${fmt(d.secTot)} seções (${pct(r.pctSec)})</div>`;
+}
+
+function limitesUFs(lista) {
+  let b = null;
+  if (camadaUFs) camadaUFs.eachLayer(l => { if (lista.includes(l.feature.properties.uf)) b = b ? b.extend(l.getBounds()) : L.latLngBounds(l.getBounds().getSouthWest(), l.getBounds().getNorthEast()); });
+  return b;
 }
 
 function enquadrar() {
+  const op = { padding: [30, 30], duration: 1 };
+  if (sel.tipo === 'total') { mapa.flyTo([-5, -35], cfg.vertical ? 2.25 : 2.75, { duration: 1 }); return; }
   if (sel.tipo === 'mundo') { mapa.flyTo([20, 10], cfg.vertical ? 1.5 : 2, { duration: 1 }); return; }
+  if (sel.tipo === 'brasil') { const b = limitesUFs(UFS); if (b) mapa.flyToBounds(b, op); return; }
+  if (sel.tipo === 'regiao') { const b = limitesUFs(REGIOES[sel.id][1]); if (b) mapa.flyToBounds(b, { ...op, maxZoom: 6 }); return; }
+  if (sel.tipo === 'uf') { const b = limitesUFs([sel.id]); if (b) mapa.flyToBounds(b, { ...op, maxZoom: 8 }); return; }
+  if (sel.tipo === 'municipio') {
+    let b = null;
+    if (camadaMun) camadaMun.eachLayer(l => { if (IBGE_PARA_TSE[l.feature.properties.ibge] === sel.id) b = l.getBounds(); });
+    if (b) mapa.flyToBounds(b, { ...op, maxZoom: 10 }); else { const u = limitesUFs([MUNICIPIOS[sel.id][0]]); if (u) mapa.flyToBounds(u, op); }
+    return;
+  }
   const pts = cidadesDa(sel).filter(c => c.lat != null).map(c => [c.lat, c.lon]);
   let bounds = pts.length ? L.latLngBounds(pts) : null;
   if (sel.tipo === 'pais') camadaPaises.eachLayer(l => { if (l.feature.properties.iso === sel.id) bounds = bounds ? bounds.extend(l.getBounds()) : l.getBounds(); });
   if (!bounds) return;
-  const maxZoom = sel.tipo === 'cidade' ? 7 : sel.tipo === 'pais' ? 6 : 4;
-  mapa.flyToBounds(bounds, { padding: [40, 40], maxZoom, duration: 1 });
+  mapa.flyToBounds(bounds, { padding: [40, 40], maxZoom: sel.tipo === 'cidade' ? 7 : sel.tipo === 'pais' ? 6 : 4, duration: 1 });
 }
 
 // ---------------------------------------------------------------- seleção
 function selecionar(s, { mover = true, manual = true } = {}) {
   sel = s;
   if (manual && cfg.tour) pararTour(true);
-  if (s.tipo === 'mundo') aba = 'paises';
-  else if (s.tipo === 'continente') aba = 'paises';
-  else if (s.tipo === 'pais') aba = 'cidades';
-  else if (s.tipo === 'cidade') aba = 'secoes';
+  aba = { total: 'ufs', brasil: 'ufs', regiao: 'ufs', uf: 'municipios', municipio: 'municipios', mundo: 'paises', continente: 'paises', pais: 'cidades', cidade: 'secoes' }[s.tipo];
+  const uf = ufEmFoco();
+  mostrarMunicipios(uf).then(() => { if (mover && uf && sel.tipo === 'municipio') enquadrar(); });
+  if (uf && !munDados[uf]) carregarMunicipiosUF(uf).then(render).catch(e => console.warn(e));
   sincronizarFiltros();
   render();
   if (mover) enquadrar();
 }
 
+function caminho(s) {
+  const p = [{ s: { tipo: 'total' }, nome: 'Total' }];
+  const add = (x) => p.push({ s: x, nome: iconeSel(x) + esc(x.tipo === 'municipio' ? MUNICIPIOS[x.id][1] : nomeSel(x)) });
+  if (['brasil', 'regiao', 'uf', 'municipio'].includes(s.tipo)) {
+    add({ tipo: 'brasil' });
+    const uf = s.tipo === 'uf' ? s.id : s.tipo === 'municipio' ? MUNICIPIOS[s.id][0] : null;
+    const reg = s.tipo === 'regiao' ? s.id : uf ? REGIAO_DA_UF[uf] : null;
+    if (reg) p.push({ s: { tipo: 'regiao', id: reg }, nome: REGIOES[reg][0] });
+    if (uf) add({ tipo: 'uf', id: uf });
+    if (s.tipo === 'municipio') add(s);
+  } else if (ehExterior(s)) {
+    p.push({ s: { tipo: 'mundo' }, nome: '🌍 Exterior' });
+    let cont = null, iso = null;
+    if (s.tipo === 'continente') cont = s.id;
+    if (s.tipo === 'pais') { iso = s.id; cont = PAISES[iso][1]; }
+    if (s.tipo === 'cidade') { const c = cidades.get(s.id); iso = c.iso; cont = c.cont; }
+    if (cont) p.push({ s: { tipo: 'continente', id: cont }, nome: CONTINENTES[cont] });
+    if (iso) add({ tipo: 'pais', id: iso });
+    if (s.tipo === 'cidade') add(s);
+  }
+  return p;
+}
+
 function voltar() {
-  if (sel.tipo === 'cidade') { const c = cidades.get(sel.id); selecionar(c.iso ? { tipo: 'pais', id: c.iso } : { tipo: 'mundo' }); }
-  else if (sel.tipo === 'pais') selecionar({ tipo: 'continente', id: PAISES[sel.id][1] });
-  else selecionar({ tipo: 'mundo' });
+  const p = caminho(sel);
+  if (p.length > 1) selecionar(p[p.length - 2].s);
 }
 
 function trilha() {
-  const partes = [{ s: { tipo: 'mundo' }, nome: '🌍 Mundo' }];
-  let cont = null, iso = null;
-  if (sel.tipo === 'continente') cont = sel.id;
-  if (sel.tipo === 'pais') { iso = sel.id; cont = PAISES[iso][1]; }
-  if (sel.tipo === 'cidade') { const c = cidades.get(sel.id); iso = c.iso; cont = c.cont; }
-  if (cont) partes.push({ s: { tipo: 'continente', id: cont }, nome: CONTINENTES[cont] });
-  if (iso) partes.push({ s: { tipo: 'pais', id: iso }, nome: bandeira(iso) + ' ' + esc(PAISES[iso][0]) });
-  if (sel.tipo === 'cidade') partes.push({ s: sel, nome: esc(cidades.get(sel.id).nome) });
+  const partes = caminho(sel);
   const el = $('trilha');
   el.innerHTML = partes.map((p, i) => `<button data-i="${i}" class="${i === partes.length - 1 ? 'atual' : ''}">${p.nome}</button>`).join('<span>›</span>');
   el.querySelectorAll('button').forEach(b => b.onclick = () => selecionar(partes[+b.dataset.i].s));
@@ -464,12 +698,11 @@ function agendarRender() {
 
 function render() {
   if (!cands.length) return;
-  const lista = cidadesDa(sel);
-  const d = agregar(lista);
+  const d = agregarSel(sel);
   const r = resumo(d);
 
-  $('subtitulo').innerHTML = `Urnas no exterior · Presidente · ${T.nome} · ${sel.tipo === 'pais' || sel.tipo === 'cidade' ? bandeira(sel.tipo === 'pais' ? sel.id : cidades.get(sel.id).iso) : ''} ${esc(nomeSel(sel))}`;
-  const dTot = agregar([...cidades.values()]);
+  $('subtitulo').innerHTML = `Presidente · ${T.nome} · ${iconeSel(sel)} ${esc(nomeSel(sel))}`;
+  const dTot = agregarSel({ tipo: 'total' });
   const rTot = resumo(dTot);
   $('pctSecoes').textContent = pct(rTot.pctSec, 2);
   $('barraSecoes').style.width = rTot.pctSec + '%';
@@ -477,20 +710,20 @@ function render() {
   $('ultimaAtual').textContent = `${fmt(dTot.secRec)} de ${fmt(dTot.secTot)} seções · atualizado ${hora}` + (pendentesBU > 0 ? ` · baixando ${fmt(pendentesBU)} BUs` : '');
 
   trilha();
+  renderChips();
   renderPlacar(d, r);
   renderEstatisticas(d, r);
   renderMapa();
   renderRanking();
   renderTicker();
   renderLegenda();
-  $('selo').innerHTML = sel.tipo === 'mundo' ? '' :
-    `<div>${sel.tipo === 'pais' ? bandeira(sel.id) : sel.tipo === 'cidade' ? bandeira(cidades.get(sel.id).iso) : ''} ${esc(nomeSel(sel))}</div>` +
-    (r.validos ? `<small>${fmt(d.comp)} votantes</small>` : '<small>sem votos apurados</small>');
+  $('selo').innerHTML = sel.tipo === 'total' ? '' :
+    `<div>${iconeSel(sel)} ${esc(nomeSel(sel))}</div>` + (r.validos ? `<small>${fmt(d.comp)} votantes · ${pct(r.pctSec)} das seções</small>` : '<small>sem votos apurados</small>');
 }
 
 function foto(c) { return modoServidor ? `dados/fotos/${c.sq}.jpeg` : `${BASE}/${T.ele}/fotos/br/${c.sq}.jpeg`; }
 // se a foto falhar, mostra as iniciais do candidato no lugar
-const iniciais = nome => nome.split(/s+/).filter(Boolean).slice(0, 2).map(p => p[0]).join("");
+const iniciais = nome => nome.split(/\s+/).filter(Boolean).slice(0, 2).map(p => p[0]).join('');
 function imgFoto(c) { return `<span class="foto" data-ini="${esc(iniciais(c.nome))}"><img src="${foto(c)}" alt="" onerror="this.remove()"></span>`; }
 
 function renderPlacar(d, r) {
@@ -527,51 +760,62 @@ function renderPlacar(d, r) {
 
 function renderEstatisticas(d, r) {
   const itens = [
-    ['Seções', `${fmt(d.secRec)}/${fmt(d.secTot)} <small>${pct(r.pctSec)}</small>`],
+    ['Seções apuradas', `${fmt(d.secRec)}/${fmt(d.secTot)} <small>${pct(r.pctSec)}</small>`],
     ['Votantes', fmt(d.comp) + (d.aptos ? ` <small>${pct(100 * d.comp / d.aptos)} dos aptos</small>` : '')],
     ['Válidos', fmt(r.validos)],
     ['Brancos', fmt(d.brancos) + (d.comp ? ` <small>${pct(100 * d.brancos / d.comp)}</small>` : '')],
     ['Nulos', fmt(d.nulos) + (d.comp ? ` <small>${pct(100 * d.nulos / d.comp)}</small>` : '')],
   ];
-  if (sel.tipo === 'mundo' || sel.tipo === 'continente') itens.splice(1, 0, ['Cidades', `${fmt(d.nCidVotos)}/${fmt(d.nCid)}`]);
+  if (['mundo', 'continente'].includes(sel.tipo)) itens.splice(1, 0, ['Cidades', `${fmt(d.nCidVotos)}/${fmt(d.nCid)}`]);
+  if (sel.tipo === 'total') {
+    const dx = agregar([...cidades.values()]);
+    itens.splice(1, 0, ['Exterior', `${fmt(dx.comp)} <small>votantes</small>`]);
+  }
   let h = itens.map(([k, v]) => `<div class="est"><span>${k}</span><b>${v}</b></div>`).join('');
   if (cfg.brasil && brasil) {
     const rb = resumo(brasil);
     h += rb.validos
-      ? `<div class="est brasil"><span>Brasil (oficial ${pct(rb.pctSec)})</span><b>${rb.lista.slice(0, 2).map(c => `<em style="color:${c.cor}">${esc(c.nome)} ${pct(c.pct)}</em>`).join(' × ')}</b></div>`
-      : `<div class="est brasil"><span>Brasil (oficial)</span><b><small>aguardando divulgação</small></b></div>`;
+      ? `<div class="est brasil"><span>TSE oficial · total do país (${pct(rb.pctSec)} das seções)</span><b>${rb.lista.slice(0, 2).map(c => `<em style="color:${c.cor}">${esc(c.nome)} ${pct(c.pct)}</em>`).join(' × ')}</b></div>`
+      : `<div class="est brasil"><span>TSE oficial · total do país</span><b><small>aguardando divulgação (a partir das 17h de Brasília)</small></b></div>`;
   }
   $('estatisticas').innerHTML = h;
 }
 
+function item(chave, nome, icone, d, s) { return { chave, nome, icone, d, r: resumo(d), s }; }
+
 function itensRanking() {
-  const todas = cidadesDa(sel);
   let itens = [];
-  if (aba === 'secoes' && sel.tipo === 'cidade') {
+  if (aba === 'ufs') {
+    const lista = sel.tipo === 'regiao' ? REGIOES[sel.id][1] : UFS;
+    itens = lista.map(uf => item(uf, UF_NOMES[uf], seloUF(uf), dadosUF(uf), { tipo: 'uf', id: uf }));
+  } else if (aba === 'regioes') {
+    itens = Object.entries(REGIOES).map(([k, [n, l]]) => item(k, n, '', somaUFs(l), { tipo: 'regiao', id: k }));
+  } else if (aba === 'municipios') {
+    const uf = ufEmFoco();
+    const dados = munDados[uf] || {};
+    itens = Object.entries(MUNICIPIOS).filter(([, m]) => m[0] === uf)
+      .map(([cd, m]) => item(cd, esc(m[1]) + (m[3] ? ' <small>capital</small>' : ''), '', dados[cd] ? somar(vazio(), dados[cd]) : vazio(), { tipo: 'municipio', id: cd }));
+  } else if (aba === 'secoes' && sel.tipo === 'cidade') {
     const c = cidades.get(sel.id);
     for (const s of c.secoes) {
       const r0 = c.bu[`${s.zona}-${s.ns}`];
       const d = vazio(); d.secTot = 1;
       if (r0) { somar(d, { ...vazio(), aptos: r0.aptos, comp: r0.comp, votos: r0.votos, brancos: r0.brancos, nulos: r0.nulos }); d.secRec = 1; }
-      itens.push({ chave: s.ns, nome: `Seção ${s.ns}` + (s.agregadas.length ? ` <small>+${s.agregadas.length} agreg.</small>` : ''), iso: null, d, r: resumo(d), s: null });
-    }
-    return ordenar(itens);
-  }
-  if (aba === 'continentes') {
-    for (const k of Object.keys(CONTINENTES)) {
-      const d = agregar(todas.filter(c => c.cont === k));
-      if (d.nCid) itens.push({ chave: k, nome: CONTINENTES[k], iso: null, d, r: resumo(d), s: { tipo: 'continente', id: k } });
-    }
-  } else if (aba === 'paises') {
-    const isos = [...new Set(todas.map(c => c.iso).filter(Boolean))];
-    for (const iso of isos) {
-      const d = agregar(todas.filter(c => c.iso === iso));
-      itens.push({ chave: iso, nome: PAISES[iso][0], iso, d, r: resumo(d), s: { tipo: 'pais', id: iso } });
+      itens.push(item(s.ns, `Seção ${s.ns}` + (s.agregadas.length ? ` <small>+${s.agregadas.length} agreg.</small>` : ''), '', d, null));
     }
   } else {
-    for (const c of todas) {
-      const d = dadosCidade(c);
-      itens.push({ chave: c.cd, nome: c.nome, iso: c.iso, d, r: resumo(d), s: { tipo: 'cidade', id: c.cd } });
+    const todas = cidadesDa(sel.tipo === 'total' ? { tipo: 'mundo' } : sel);
+    if (aba === 'continentes') {
+      for (const k of Object.keys(CONTINENTES)) {
+        const d = agregar(todas.filter(c => c.cont === k));
+        if (d.nCid) itens.push(item(k, CONTINENTES[k], '', d, { tipo: 'continente', id: k }));
+      }
+    } else if (aba === 'paises') {
+      for (const iso of new Set(todas.map(c => c.iso).filter(Boolean))) {
+        itens.push(item(iso, PAISES[iso][0], bandeira(iso), agregar(todas.filter(c => c.iso === iso)), { tipo: 'pais', id: iso }));
+      }
+    } else {
+      for (const c of todas) itens.push(item(c.cd, esc(c.nome), bandeira(c.iso), dadosCidade(c), { tipo: 'cidade', id: c.cd }));
     }
   }
   return ordenar(itens);
@@ -591,49 +835,84 @@ function ordenar(itens) {
   return itens;
 }
 
+function abasDaSelecao() {
+  switch (sel.tipo) {
+    case 'total': return [['ufs', 'Estados'], ['regioes', 'Regiões'], ['paises', 'Exterior']];
+    case 'brasil': return [['ufs', 'Estados'], ['regioes', 'Regiões']];
+    case 'regiao': return [['ufs', 'Estados']];
+    case 'uf': case 'municipio': return [['municipios', 'Municípios']];
+    case 'mundo': return [['paises', 'Países'], ['continentes', 'Continentes'], ['cidades', 'Cidades']];
+    case 'continente': return [['paises', 'Países'], ['cidades', 'Cidades']];
+    case 'pais': return [['cidades', 'Cidades']];
+    case 'cidade': return [['secoes', 'Seções']];
+  }
+  return [];
+}
+
 function renderRanking() {
-  const abas = sel.tipo === 'cidade' ? [['secoes', 'Seções']] :
-    sel.tipo === 'pais' ? [['cidades', 'Cidades']] :
-      sel.tipo === 'continente' ? [['paises', 'Países'], ['cidades', 'Cidades']] :
-        [['paises', 'Países'], ['continentes', 'Continentes'], ['cidades', 'Cidades']];
+  const abas = abasDaSelecao();
   if (!abas.some(a => a[0] === aba)) aba = abas[0][0];
   $('abas').innerHTML = abas.map(([k, n]) => `<button data-k="${k}" class="${k === aba ? 'ativa' : ''}">${n}</button>`).join('');
   $('abas').querySelectorAll('button').forEach(b => b.onclick = () => { aba = b.dataset.k; renderRanking(); });
-  $('rankingTitulo').textContent = sel.tipo === 'mundo' ? 'Comparativo mundial' : `Em ${nomeSel(sel)}`;
+  $('rankingTitulo').textContent = sel.tipo === 'total' ? 'Comparativo geral' : `Em ${nomeSel(sel)}`;
 
   const itens = itensRanking();
   const ol = $('rankingLista');
-  if (!itens.length) { ol.innerHTML = '<li class="vazio">Nenhum voto apurado ainda nesta seleção.</li>'; return; }
+  if (!itens.length) {
+    const carregando = aba === 'municipios' && !munDados[ufEmFoco()];
+    ol.innerHTML = `<li class="vazio">${carregando ? 'Carregando municípios…' : 'Nenhum voto apurado ainda nesta seleção.'}</li>`;
+    return;
+  }
+  const atual = sel.tipo === 'municipio' ? sel.id : null;
   ol.innerHTML = itens.map((i, idx) => {
     const barras = i.r.validos
       ? i.r.lista.filter(c => c.votos > 0).map(c => `<div title="${esc(c.nome)} ${pct(c.pct)}" style="width:${c.pct}%;background:${c.cor}"></div>`).join('')
       : '';
     const lider = i.r.lider ? `<span class="rk-lider" style="color:${i.r.lider.cor}">${esc(i.r.lider.nome)} ${pct(i.r.lider.pct)}</span>` : '<span class="rk-lider sem">aguardando</span>';
     const tops = i.r.validos ? i.r.lista.slice(0, cands.length === 2 ? 2 : 3).map(c => `<span style="color:${c.cor}">${fmt(c.votos)}</span>`).join(' · ') : '';
-    return `<li data-idx="${idx}" class="${i.s ? 'clicavel' : ''}">
+    return `<li data-idx="${idx}" class="${i.s ? 'clicavel' : ''} ${i.chave === atual ? 'atual' : ''}">
       <div class="rk-pos">${idx + 1}</div>
       <div class="rk-corpo">
-        <div class="rk-linha1">${bandeira(i.iso)}<span class="rk-nome">${i.nome}</span>${lider}</div>
+        <div class="rk-linha1">${i.icone}<span class="rk-nome">${i.nome}</span>${lider}</div>
         <div class="rk-barra">${barras}</div>
-        <div class="rk-linha2"><span>${tops}</span><span>${fmt(i.d.comp)} votantes · ${fmt(i.d.secRec)}/${fmt(i.d.secTot)} seç.</span></div>
+        <div class="rk-linha2"><span>${tops}</span><span>${fmt(i.d.comp)} votantes · ${pct(i.r.pctSec, 0)} seç.</span></div>
       </div></li>`;
   }).join('');
   ol.querySelectorAll('li.clicavel').forEach(li => li.onclick = () => selecionar(itens[+li.dataset.idx].s));
 }
 
+function renderChips() {
+  const el = $('continentes');
+  let chips;
+  if (ehExterior(sel)) {
+    chips = [[{ tipo: 'total' }, 'Total'], [{ tipo: 'mundo' }, '🌍 Exterior'], ...Object.entries(CONTINENTES).map(([k, v]) => [{ tipo: 'continente', id: k }, v])];
+  } else {
+    chips = [[{ tipo: 'total' }, 'Total'], [{ tipo: 'brasil' }, bandeira('BR') + 'Brasil'], ...Object.entries(REGIOES).map(([k, [n]]) => [{ tipo: 'regiao', id: k }, n]), [{ tipo: 'mundo' }, '🌍 Exterior']];
+  }
+  const chave = s => s.tipo + ':' + (s.id || '');
+  const ativa = caminho(sel).map(p => chave(p.s));
+  const html = chips.map(([s, n], i) => `<button data-i="${i}" class="${ativa[ativa.length - 1] === chave(s) || (ativa.includes(chave(s)) && s.tipo !== 'total') ? 'ativa' : ''}">${n}</button>`).join('');
+  if (el.dataset.h === html) return;
+  el.dataset.h = html;
+  el.innerHTML = html;
+  el.querySelectorAll('button').forEach(b => b.onclick = () => selecionar(chips[+b.dataset.i][0]));
+}
+
 function renderTicker() {
+  const itens = [];
+  for (const uf of UFS) { const d = dadosUF(uf); itens.push({ rot: `${seloUF(uf)}<b>${esc(UF_NOMES[uf].toUpperCase())}</b>`, d, r: resumo(d) }); }
   const porPais = {};
   for (const c of cidades.values()) if (c.iso) (porPais[c.iso] ||= []).push(c);
-  const itens = Object.entries(porPais).map(([iso, l]) => { const d = agregar(l); return { iso, d, r: resumo(d) }; })
-    .filter(i => i.r.validos).sort((a, b) => b.d.comp - a.d.comp).slice(0, 40);
-  const html = itens.map(i => `<span class="tk">${bandeira(i.iso)}<b>${esc(PAISES[i.iso][0].toUpperCase())}</b> ` +
-    i.r.lista.slice(0, 2).map(c => `<em style="color:${c.cor}">${esc(c.nome)} ${pct(c.pct)}</em>`).join(' × ') + '</span>').join('');
+  for (const [iso, l] of Object.entries(porPais)) { const d = agregar(l); itens.push({ rot: `${bandeira(iso)}<b>${esc(PAISES[iso][0].toUpperCase())}</b>`, d, r: resumo(d) }); }
+  const lista = itens.filter(i => i.r.validos).sort((a, b) => b.d.comp - a.d.comp).slice(0, 50);
+  const html = lista.map(i => `<span class="tk">${i.rot} ` +
+    i.r.lista.slice(0, 2).map(c => `<em style="color:${c.cor}">${esc(c.nome)} ${pct(c.pct)}</em>`).join(' × ') + ` <small>${pct(i.r.pctSec, 0)} apurado</small></span>`).join('');
   const trilho = $('tickerTrilho');
-  const novo = html ? html + html : '<span class="tk">Aguardando os primeiros boletins de urna do exterior…</span>';
+  const novo = html ? html + html : '<span class="tk">Aguardando os primeiros resultados…</span>';
   if (trilho.dataset.h !== novo) {
     trilho.dataset.h = novo;
     trilho.innerHTML = novo;
-    trilho.style.animationDuration = Math.max(30, itens.length * 6) + 's';
+    trilho.style.animationDuration = Math.max(30, lista.length * 6) + 's';
   }
 }
 
@@ -653,11 +932,15 @@ function iniciarTour() {
   clearInterval(timerTour);
   tourIdx = 0;
   const passo = () => {
+    const ufsComVotos = UFS.map(uf => ({ uf, d: dadosUF(uf) })).filter(x => x.d.comp > 0).sort((a, b) => b.d.comp - a.d.comp).slice(0, 12);
     const porPais = {};
     for (const c of cidades.values()) if (c.iso) (porPais[c.iso] ||= []).push(c);
     const paises = Object.entries(porPais).map(([iso, l]) => ({ iso, d: agregar(l) }))
-      .filter(p => p.d.comp > 0).sort((a, b) => b.d.comp - a.d.comp).slice(0, 25);
-    const roteiro = [{ tipo: 'mundo' }, ...paises.map(p => ({ tipo: 'pais', id: p.iso }))];
+      .filter(p => p.d.comp > 0).sort((a, b) => b.d.comp - a.d.comp).slice(0, 10);
+    const roteiro = [
+      { tipo: 'total' }, { tipo: 'brasil' }, ...ufsComVotos.map(x => ({ tipo: 'uf', id: x.uf })),
+      { tipo: 'mundo' }, ...paises.map(p => ({ tipo: 'pais', id: p.iso })),
+    ];
     selecionar(roteiro[tourIdx % roteiro.length], { manual: false });
     tourIdx++;
   };
@@ -682,28 +965,44 @@ function montarSelectsCandidatos() {
   $('fOrdem').value = cfg.ordem;
 }
 
+// "Ir para": todas as seleções possíveis num select só
+const DESTINOS = [];
 function montarFiltrosLocais() {
-  $('fContinente').innerHTML = '<option value="">Todos</option>' + Object.entries(CONTINENTES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
-  $('continentes').innerHTML = '<button data-k="">🌍 Mundo</button>' + Object.entries(CONTINENTES).map(([k, v]) => `<button data-k="${k}">${v}</button>`).join('');
-  $('continentes').querySelectorAll('button').forEach(b => b.onclick = () => selecionar(b.dataset.k ? { tipo: 'continente', id: b.dataset.k } : { tipo: 'mundo' }));
-  $('listaCidades').innerHTML = [...cidades.values()].map(c => `<option value="${esc(c.nome)}">${esc(PAISES[c.iso]?.[0] || '')}</option>`).join('');
-}
-
-function montarPaises(cont) {
-  const isos = Object.keys(PAISES).filter(i => !cont || PAISES[i][1] === cont).sort((a, b) => PAISES[a][0].localeCompare(PAISES[b][0], 'pt-BR'));
-  $('fPais').innerHTML = '<option value="">Todos</option>' + isos.map(i => `<option value="${i}">${PAISES[i][0]}</option>`).join('');
+  const grupos = [
+    ['Geral', [[{ tipo: 'total' }, 'Total (Brasil + exterior)'], [{ tipo: 'brasil' }, 'Brasil'], [{ tipo: 'mundo' }, 'Exterior']]],
+    ['Regiões', Object.entries(REGIOES).map(([k, [n]]) => [{ tipo: 'regiao', id: k }, n])],
+    ['Estados', UFS.map(uf => [{ tipo: 'uf', id: uf }, `${UF_NOMES[uf]} (${uf})`]).sort((a, b) => a[1].localeCompare(b[1], 'pt-BR'))],
+    ['Exterior · continentes', Object.entries(CONTINENTES).map(([k, v]) => [{ tipo: 'continente', id: k }, v])],
+    ['Exterior · países', Object.keys(PAISES).map(iso => [{ tipo: 'pais', id: iso }, PAISES[iso][0]]).sort((a, b) => a[1].localeCompare(b[1], 'pt-BR'))],
+  ];
+  let h = '';
+  for (const [g, l] of grupos) {
+    h += `<optgroup label="${g}">` + l.map(([s, n]) => { DESTINOS.push(s); return `<option value="${DESTINOS.length - 1}">${esc(n)}</option>`; }).join('') + '</optgroup>';
+  }
+  $('fLocal').innerHTML = h;
+  const opcoes = Object.entries(MUNICIPIOS).map(([, m]) => `<option value="${esc(m[1])} - ${m[0]}"></option>`);
+  for (const c of cidades.values()) opcoes.push(`<option value="${esc(c.nome)} - ${esc(PAISES[c.iso]?.[0] || 'Exterior')}"></option>`);
+  $('listaCidades').innerHTML = opcoes.join('');
 }
 
 function sincronizarFiltros() {
-  let cont = '', iso = '';
-  if (sel.tipo === 'continente') cont = sel.id;
-  if (sel.tipo === 'pais') { iso = sel.id; cont = PAISES[iso][1]; }
-  if (sel.tipo === 'cidade') { const c = cidades.get(sel.id); iso = c.iso || ''; cont = c.cont || ''; }
-  $('fContinente').value = cont;
-  montarPaises(cont);
-  $('fPais').value = iso;
-  if (sel.tipo !== 'cidade') $('fBusca').value = '';
-  $('continentes').querySelectorAll('button').forEach(b => b.classList.toggle('ativa', b.dataset.k === cont && sel.tipo !== 'mundo' || (!b.dataset.k && sel.tipo === 'mundo')));
+  const chave = s => s.tipo + ':' + (s.id || '');
+  const alvo = caminho(sel).map(p => chave(p.s)).reverse().find(k => DESTINOS.some(d => chave(d) === k));
+  const i = DESTINOS.findIndex(d => chave(d) === alvo);
+  if (i >= 0) $('fLocal').value = String(i);
+  if (sel.tipo !== 'municipio' && sel.tipo !== 'cidade') $('fBusca').value = '';
+}
+
+function buscar(q) {
+  q = q.trim().toLowerCase();
+  if (!q) return;
+  const [nome, onde = ''] = q.split(' - ');
+  const mun = Object.entries(MUNICIPIOS).find(([, m]) => m[1].toLowerCase() === nome && (!onde || m[0].toLowerCase() === onde));
+  if (mun) return selecionar({ tipo: 'municipio', id: mun[0] });
+  const cid = [...cidades.values()].find(c => c.nome.toLowerCase() === nome) || [...cidades.values()].find(c => c.nome.toLowerCase().includes(nome));
+  if (cid) return selecionar({ tipo: 'cidade', id: cid.cd });
+  const parcial = Object.entries(MUNICIPIOS).find(([, m]) => m[1].toLowerCase().includes(nome));
+  if (parcial) selecionar({ tipo: 'municipio', id: parcial[0] });
 }
 
 function aplicarLayout() {
@@ -711,8 +1010,16 @@ function aplicarLayout() {
   setTimeout(() => { mapa.invalidateSize(); enquadrar(); }, 50);
 }
 
+function atualizarBotaoSom() {
+  const b = $('btnSom');
+  b.textContent = cfg.som ? '🔊' : '🔇';
+  b.title = cfg.som ? 'Som ligado (S)' : 'Som desligado (S)';
+  b.classList.toggle('pendente', cfg.som && !Som.liberado());
+  Som.definir(cfg.som);
+}
+
 function ligarFiltros() {
-  const chk = { fSoComVotos: 'soComVotos', fCidades: 'cidades', fRotulos: 'rotulos', fBrasil: 'brasil', fVertical: 'vertical', fTour: 'tour' };
+  const chk = { fSoComVotos: 'soComVotos', fCidades: 'cidades', fRotulos: 'rotulos', fBrasil: 'brasil', fVertical: 'vertical', fTour: 'tour', fSom: 'som' };
   const sels = { fTurno: 'turno', fFonte: 'fonte', fDestaque: 'destaque', fOrdem: 'ordem', fTourSeg: 'tourSeg', fIntervalo: 'intervalo' };
   for (const [id, k] of Object.entries(chk)) $(id).checked = cfg[k];
   for (const [id, k] of Object.entries(sels)) if ($(id).querySelector(`option[value="${cfg[k]}"]`)) $(id).value = cfg[k];
@@ -721,7 +1028,7 @@ function ligarFiltros() {
     cfg[k] = $(id).checked; salvarCfg();
     if (k === 'vertical') aplicarLayout();
     if (k === 'tour') cfg.tour ? iniciarTour() : pararTour(false);
-    if (k === 'brasil' && cfg.brasil) carregarBrasil().then(render);
+    if (k === 'som') { atualizarBotaoSom(); if (cfg.som) Som.tocar(); }
     render();
   };
   for (const [id, k] of Object.entries(sels)) $(id).onchange = () => {
@@ -732,36 +1039,37 @@ function ligarFiltros() {
     else if (k === 'tourSeg' && cfg.tour) iniciarTour();
     else render();
   };
-  $('fContinente').onchange = () => selecionar($('fContinente').value ? { tipo: 'continente', id: $('fContinente').value } : { tipo: 'mundo' });
-  $('fPais').onchange = () => selecionar($('fPais').value ? { tipo: 'pais', id: $('fPais').value } : ($('fContinente').value ? { tipo: 'continente', id: $('fContinente').value } : { tipo: 'mundo' }));
-  $('fBusca').onchange = () => {
-    const q = $('fBusca').value.trim().toLowerCase();
-    const c = [...cidades.values()].find(x => x.nome.toLowerCase() === q) || [...cidades.values()].find(x => x.nome.toLowerCase().includes(q));
-    if (q && c) selecionar({ tipo: 'cidade', id: c.cd });
-  };
+  $('fLocal').onchange = () => selecionar(DESTINOS[+$('fLocal').value]);
+  $('fBusca').onchange = () => buscar($('fBusca').value);
   $('btnFiltros').onclick = () => $('painel').classList.toggle('oculto');
+  $('btnSom').onclick = () => { if (!Som.liberado()) { Som.ativar(); cfg.som = true; } else cfg.som = !cfg.som; salvarCfg(); $('fSom').checked = cfg.som; atualizarBotaoSom(); if (cfg.som) Som.tocar(); };
   $('fecharPainel').onclick = () => $('painel').classList.add('oculto');
   $('btnAtualizar').onclick = () => atualizar();
   $('btnCache').onclick = () => {
     Object.keys(localStorage).filter(k => k.startsWith('bu-')).forEach(k => localStorage.removeItem(k));
     trocarTurno();
   };
+  document.addEventListener('pointerdown', () => setTimeout(atualizarBotaoSom, 50));
   document.addEventListener('keydown', e => {
     if (e.target.matches('input, select')) return;
     const k = e.key.toLowerCase();
     if (k === 'f') $('painel').classList.toggle('oculto');
     else if (k === 't') { $('fTour').checked = !cfg.tour; $('fTour').onchange(); }
     else if (k === 'v') { $('fVertical').checked = !cfg.vertical; $('fVertical').onchange(); }
+    else if (k === 's') { $('fSom').checked = !cfg.som; $('fSom').onchange(); }
     else if (k === 'r') atualizar();
-    else if (k === 'escape') sel.tipo === 'mundo' ? null : selecionar({ tipo: 'mundo' });
+    else if (k === 'escape') { if (sel.tipo !== 'total') selecionar({ tipo: 'total' }); }
     else if (k === 'backspace') voltar();
+    setTimeout(atualizarBotaoSom, 50);
   });
 }
 
 function trocarTurno() {
   geracao++;
   T = TURNOS[cfg.turno];
-  cands = []; candSet = new Set(); ofExterior = null; brasil = null;
+  cands = []; candSet = new Set(); ofExterior = null; brasil = null; ufs = {}; munDados = {};
+  assinaturaAnterior = null;
+  for (const k in versaoMun) delete versaoMun[k];
   iniciarCidades();
   carregarCache();
   render();
@@ -773,8 +1081,8 @@ function trocarTurno() {
 iniciarCidades();
 carregarCache();
 montarFiltrosLocais();
-montarPaises('');
 ligarFiltros();
 sincronizarFiltros();
+atualizarBotaoSom();
 aplicarLayout();
 atualizar().then(() => { if (cfg.tour) iniciarTour(); });

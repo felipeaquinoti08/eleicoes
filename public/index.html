@@ -12,7 +12,7 @@
   <header id="topo">
     <div class="titulo">
       <div class="linha1"><span class="ao-vivo"><i></i>AO VIVO</span><h1>APURAÇÃO DE ELEIÇÕES</h1></div>
-      <div class="sub" id="subtitulo">Urnas no exterior · Presidente · Eleições 2026</div>
+      <div class="sub" id="subtitulo">Presidente · Eleições 2026</div>
     </div>
     <div class="progresso">
       <div class="progresso-txt"><span id="pctSecoes">–</span> <small>seções apuradas</small></div>
@@ -45,27 +45,26 @@
 </div>
 
 <button id="btnFiltros" title="Filtros (F)">⚙</button>
+<button id="btnSom" title="Som">🔊</button>
+<div id="novosDados">🗳️ NOVOS DADOS</div>
 
 <div id="painel" class="oculto">
   <div class="painel-topo"><h3>Filtros e exibição</h3><button id="fecharPainel">✕</button></div>
   <label>Turno
     <select id="fTurno"><option value="2">2º turno (25/10)</option><option value="1">1º turno (04/10)</option></select>
   </label>
-  <label>Fonte dos dados
+  <label>Fonte dos dados do exterior
     <select id="fFonte">
       <option value="auto">Automático (o que tiver mais seções)</option>
       <option value="bu">Boletins de urna (seção a seção, tempo real)</option>
       <option value="oficial">Totalização oficial do TSE</option>
     </select>
   </label>
-  <label>Continente
-    <select id="fContinente"></select>
+  <label>Ir para
+    <select id="fLocal"></select>
   </label>
-  <label>País
-    <select id="fPais"></select>
-  </label>
-  <label>Buscar cidade
-    <input id="fBusca" list="listaCidades" placeholder="ex.: Lisboa, Miami…">
+  <label>Buscar município ou cidade do exterior
+    <input id="fBusca" list="listaCidades" placeholder="ex.: Campinas, Recife, Lisboa…">
     <datalist id="listaCidades"></datalist>
   </label>
   <label>Cor do mapa
@@ -77,7 +76,8 @@
   <label class="check"><input type="checkbox" id="fSoComVotos"> Só locais com votos apurados</label>
   <label class="check"><input type="checkbox" id="fCidades"> Mostrar cidades no mapa</label>
   <label class="check"><input type="checkbox" id="fRotulos"> Rótulos no mapa</label>
-  <label class="check"><input type="checkbox" id="fBrasil"> Comparar com o Brasil (oficial)</label>
+  <label class="check"><input type="checkbox" id="fBrasil"> Mostrar total oficial do TSE</label>
+  <label class="check"><input type="checkbox" id="fSom"> Sinal sonoro quando chegarem novos dados</label>
   <hr>
   <label class="check"><input type="checkbox" id="fVertical"> Layout vertical 9:16 (TikTok)</label>
   <label class="check"><input type="checkbox" id="fTour"> Tour automático pelos países</label>
@@ -91,13 +91,15 @@
     <button id="btnAtualizar">Atualizar agora</button>
     <button id="btnCache">Limpar cache</button>
   </div>
-  <p class="dica">Atalhos: <b>F</b> filtros · <b>T</b> tour · <b>V</b> vertical · <b>R</b> atualizar · <b>Esc</b> voltar ao mundo.<br>
-  Clique em um país ou cidade no mapa (ou no ranking) para ver os votos daquela seleção.</p>
+  <p class="dica">Atalhos: <b>F</b> filtros · <b>T</b> tour · <b>V</b> vertical · <b>S</b> som · <b>R</b> atualizar · <b>Esc</b> total · <b>Backspace</b> voltar.<br>
+  Clique em um estado, município, país ou cidade no mapa (ou no ranking) para ver os votos daquela seleção.</p>
   <p class="dica" id="statusCarga"></p>
 </div>
 
 <script src="lib/leaflet.js"></script>
 <script src="cidades.js"></script>
+<script src="municipios.js"></script>
+<script src="som.js"></script>
 <script src="mundo-geo.js"></script>
 <script src="paises-geo.js"></script>
 <script src="bu.js"></script>

@@ -10,6 +10,7 @@ const TURNOS = {
   1: { ele: 6257, pleito: 3220 },
   2: { ele: 6258, pleito: 3221 },
 };
+const UFS = ["AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG","MS","MT","PA","PB","PE","PI","PR","RJ","RN","RO","RR","RS","SC","SE","SP","TO"];
 const DIR_DADOS = process.env.DIR_DADOS || path.join(__dirname, '..', 'dados');
 const CONCORRENCIA = +process.env.CONCORRENCIA || 6;
 
@@ -63,6 +64,7 @@ function gravarJSON(arquivo, obj) {
 }
 
 const oficiaisAnteriores = {};
+const ufsAnteriores = {};
 
 // cache de BUs já decodificados (sobrevive a reinícios do container)
 const caches = {};
@@ -103,6 +105,15 @@ async function sincronizarTurno(n) {
   let brasil = null;
   try { brasil = oficialDe(await getJSON(`${BASE}/${T.ele}/dados/br/br-c0001-e${pad(T.ele, 6)}-u.json`)); } catch (e) { log('aviso brasil:', e.message); }
 
+  // totalização oficial por UF (o Brasil todo cabe em 27 arquivos)
+  const ufsAnt = (ufsAnteriores[n] ||= {});
+  const ufs = {};
+  await emParalelo(UFS, CONCORRENCIA, async uf => {
+    const u = uf.toLowerCase();
+    ufs[uf] = ufsAnt[uf] = oficialDe(await getJSON(`${BASE}/${T.ele}/dados/${u}/${u}-c0001-e${pad(T.ele, 6)}-u.json`));
+  });
+  for (const uf of UFS) if (!ufs[uf] && ufsAnt[uf]) ufs[uf] = ufsAnt[uf];
+
   const cs = await getJSON(`${BASE}/arquivo-urna/${T.pleito}/config/zz/zz-p${pad(T.pleito, 6)}-cs.json`);
   const zz = cs.abr ? cs.abr.find(a => a.cd === 'zz') : cs;
   const cidades = {};
@@ -123,8 +134,9 @@ async function sincronizarTurno(n) {
 
   const publicar = () => gravarJSON(path.join(DIR_DADOS, `turno-${n}.json`), {
     gerado: new Date().toISOString(), turno: n, ele: T.ele, pleito: T.pleito,
-    candidatos, ofExterior, brasil, cidades,
+    candidatos, ofExterior, brasil, ufs, cidades,
   });
+  publicar();
   // durante a primeira carga (centenas de BUs), publica parciais para o painel ir se populando
   const parcial = setInterval(() => {
     try { publicar(); gravarJSON(path.join(DIR_DADOS, `cache-bu-${T.pleito}.json`), cache); log(`turno ${n}: parcial ${feitos}/${fila.length} BUs novos`); }
@@ -164,6 +176,55 @@ async function sincronizarTurno(n) {
     (errosOf ? `, ${errosOf} falhas oficiais` : '') + ` em ${((Date.now() - inicio) / 1000).toFixed(1)}s`);
 }
 
+// ---------------------------------------------------------------- municípios do Brasil
+// O arquivo <uf>-e<ele>-ab.json traz as estatísticas de todos os municípios da UF; só baixamos o
+// resultado (um arquivo por município) dos que mudaram desde a última passada.
+const estadoMun = {};
+function estadoMunDo(n) {
+  if (!estadoMun[n]) {
+    try { estadoMun[n] = JSON.parse(fs.readFileSync(path.join(DIR_DADOS, `cache-mun-${n}.json`), "utf8")); } catch { estadoMun[n] = {}; }
+  }
+  return estadoMun[n];
+}
+
+async function sincronizarMunicipios(n) {
+  const T = TURNOS[n];
+  const est = estadoMunDo(n);
+  const inicio = Date.now();
+  let baixados = 0, erros = 0;
+  // capitais e UFs mais populosas primeiro
+  const ordem = ["SP","MG","RJ","BA","PR","RS","PE","CE","PA","SC","GO","MA","AM","ES","PB","RN","MT","AL","PI","DF","MS","SE","RO","TO","AC","AP","RR"];
+  for (const uf of ordem) {
+    const u = uf.toLowerCase();
+    let ab;
+    try { ab = await getJSON(`${BASE}/${T.ele}/dados/${u}/${u}-e${pad(T.ele, 6)}-ab.json`); } catch (e) { erros++; continue; }
+    const mun = (est[uf] ||= {});
+    const fila = [];
+    for (const a of ab.abr || []) {
+      if (a.tpabr !== "mun" || !a.s || !(+a.s.st > 0)) continue;
+      const versao = `${a.s.st}|${a.dt} ${a.ht}|${a.e?.c}`;
+      if (mun[a.cdabr]?.v !== versao) fila.push({ cd: a.cdabr, versao });
+    }
+    if (!fila.length) continue;
+    erros += await emParalelo(fila, CONCORRENCIA, async it => {
+      const r = oficialDe(await getJSON(`${BASE}/${T.ele}/dados/${u}/${u}${it.cd}-c0001-e${pad(T.ele, 6)}-u.json`));
+      mun[it.cd] = { ...r, v: it.versao };
+      baixados++;
+    });
+    gravarJSON(path.join(DIR_DADOS, `turno-${n}-mun-${uf}.json`), { gerado: new Date().toISOString(), uf, municipios: mun });
+    gravarJSON(path.join(DIR_DADOS, `cache-mun-${n}.json`), est);
+  }
+  if (baixados || erros) log(`turno ${n}: municípios ${baixados} atualizados, ${erros} falhas em ${((Date.now() - inicio) / 1000).toFixed(0)}s`);
+}
+
+// passadas contínuas, com uma pausa entre elas
+async function loopMunicipios(n, pausaMin) {
+  for (;;) {
+    try { await sincronizarMunicipios(n); } catch (e) { log(`erro municípios turno ${n}:`, e.message); }
+    await espera(pausaMin * 60 * 1000);
+  }
+}
+
 function agendar(n, minutos) {
   let rodando = false, retentativa = null;
   const rodar = async () => {
@@ -186,6 +247,8 @@ function iniciar() {
   const min = +process.env.SYNC_INTERVALO_MIN || 5;
   const turnos = (process.env.TURNOS || '2,1').split(',').map(s => s.trim()).filter(t => TURNOS[t]);
   for (const t of turnos) agendar(t, t === '1' ? Math.max(min, 60) : min); // 1º turno já está encerrado
+  // municípios: o 1º turno já acabou, então depois da primeira carga só confere a cada 60 min
+  for (const t of (process.env.TURNOS_MUN || '2,1').split(',').map(s => s.trim()).filter(t => TURNOS[t])) loopMunicipios(t, t === '1' ? 60 : 1);
   log(`sincronização ativa: turnos ${turnos.join(', ')} a cada ${min} min (1º turno a cada ${Math.max(min, 60)} min)`);
 }
 

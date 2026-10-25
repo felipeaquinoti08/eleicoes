@@ -171,3 +171,17 @@ h1 { margin: 0; font-size: 28px; letter-spacing: .5px; font-weight: 800; }
 .foto::before { content: attr(data-ini); position: absolute; inset: 0; display: grid; place-items: center; font-weight: 900; color: #fff; font-size: 1.6em; }
 .foto img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .duelo-cand .foto::before { font-size: 30px; }
+
+/* ---------- Brasil ---------- */
+.selo-uf { display: inline-block; background: #e2e8f0; color: #0b1020; font-weight: 800; font-size: .72em; padding: 1px 4px; border-radius: 4px; margin-right: .35em; vertical-align: .1em; }
+.leaflet-tooltip.rotulo-uf { background: transparent; font-size: 12px; text-shadow: 0 1px 3px #000, 0 0 6px #000; padding: 0; }
+.leaflet-tooltip.rotulo-uf b { color: #fff; }
+#rankingLista li.atual { background: #facc1522; outline: 1px solid #facc1566; }
+
+/* ---------- som e aviso de novos dados ---------- */
+#btnSom { position: fixed; right: 14px; top: calc(50% + 48px); z-index: 1000; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--borda); background: var(--painel); font-size: 18px; opacity: .5; }
+#btnSom:hover { opacity: 1; }
+#btnSom.pendente { opacity: 1; animation: pulso 1.2s infinite; box-shadow: 0 0 0 2px var(--destaque); }
+#novosDados { position: fixed; top: 18px; left: 50%; transform: translate(-50%, -150%); z-index: 1100; background: var(--destaque); color: #111; font-weight: 900; font-size: 22px; padding: 8px 22px; border-radius: 30px; box-shadow: 0 8px 30px #0009; pointer-events: none; }
+#novosDados.mostrar { animation: aviso 3.2s ease; }
+@keyframes aviso { 0% { transform: translate(-50%, -150%); } 10%, 85% { transform: translate(-50%, 0); } 100% { transform: translate(-50%, -150%); } }
