@@ -5,7 +5,8 @@ Painel ao vivo da apuração das Eleições 2026 com dados públicos do TSE: Bra
 ## O que tem
 
 - **Mapa único, Brasil + exterior.** Clique num estado para ver os municípios dele, num país para ver as cidades, numa cidade do exterior para ver seção por seção. O placar, as estatísticas e o ranking mostram sempre a seleção atual. Municípios em cinza ainda não têm votos publicados pelo TSE.
-- **Placar**: à esquerda fica sempre quem está na frente.
+- **Placar**: à esquerda fica sempre quem está na frente, e logo abaixo a diferença de votos e de pontos entre os dois primeiros. A diferença também aparece nos cards e em cada linha do ranking ("dif.").
+- **Prefeitos (eleições suplementares do dia)**: lidas da configuração do TSE. No Total, a coluna da direita lista as eleições de hoje com quem lidera; no estado, os municípios com disputa; no município, o card do prefeito ao vivo com fotos.
 - **Navegação**: `Total › Brasil › Região › Estado › Município` e `Total › Exterior › Continente › País › Cidade › Seção`.
 - **Filtros**: turno, fonte dos dados do exterior, "ir para" (região, estado, continente, país), busca de município ou cidade, cor do mapa (quem lidera ou % de um candidato), ordenação do ranking, só locais com votos.
 - **Governador no 2º turno**: pelo card do Governador na coluna da direita (ao selecionar o estado), os estados com 2º turno para governador (em 2026: AC, AM, DF, ES, RN e TO, lidos da configuração do TSE), cada um com os próprios candidatos, mapa por município, ranking e letreiro.
@@ -108,6 +109,7 @@ docker inspect --format "{{.State.Health.Status}}" apuracao-eleicoes   # healthy
 | `TURNOS` | `2,1` | Turnos sincronizados (o 1º turno, já encerrado, a cada 60 min) |
 | `TURNOS_MUN` | `2,1` | Turnos com resultado por município |
 | `GOVERNADOR` | `1` | `0` desliga a coleta do 2º turno para governador |
+| `SUPLEMENTARES` | `1` | `0` desliga a coleta das eleições suplementares do dia (prefeitos) |
 | `CACHE_DADOS_S` | `15` | `max-age`/`s-maxage` dos snapshots (cache do Cloudflare e do navegador) |
 | `CONCORRENCIA` | `4` | Downloads simultâneos ao TSE. Se o `/saude` mostrar muitos 429, baixe para 2 |
 | `PORTA` | `8080` | Porta do servidor dentro do container |
@@ -225,6 +227,7 @@ public/            site estático (index.html, historico.html, app.js, bu.js, so
 server/sync.js     job de sincronização com o TSE
 server/projecao.js  projeção do 2º turno a partir do 1º turno
 server/governador.js coleta do 2º turno para governador
+server/suplementares.js eleições suplementares do dia (prefeitos)
 public/outros-cargos.js  cards dos outros cargos ao selecionar um estado
 server/historico.js job do histórico (últimas 20 eleições)
 server/server.js   servidor HTTP (site + snapshots + /saude)

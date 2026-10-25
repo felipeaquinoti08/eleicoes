@@ -393,3 +393,18 @@ body.vertical .outros-cargos, body.vertical .oc-dica { display: none; }
 #cargosUF .gm-trilho { margin: 2px 0 1px; height: 4px; }
 .foto:not(:has(img))::before { font-size: 13px; }
 body.vertical #cargosUF { display: none; }
+
+/* ---------- eleições suplementares do dia ---------- */
+.oc-sup { border-color: #a855f766; }
+.oc-sup-linha { display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%; background: none; border: none; border-top: 1px solid #26324f88; padding: 4px 0; font: inherit; color: inherit; text-align: left; cursor: pointer; font-size: 13px; }
+.oc-sup-linha:first-of-type { border-top: none; }
+.oc-sup-linha:hover { background: var(--painel2); }
+.oc-sup-lider { white-space: nowrap; font-weight: 700; font-size: 12px; }
+.oc-sup-lider small { color: var(--suave); font-weight: 400; }
+
+/* ---------- diferença de votos ---------- */
+.duelo-dif { text-align: center; margin-top: 8px; font-size: 14px; color: var(--suave); }
+.duelo-dif b { color: var(--texto); font-variant-numeric: tabular-nums; }
+.duelo-dif span { font-weight: 800; }
+.rk-dif { color: var(--suave); }
+body.vertical .duelo-dif { margin-top: 5px; font-size: 13px; }

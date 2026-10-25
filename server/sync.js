@@ -359,6 +359,11 @@ function iniciar() {
     const gov = require('./governador').criar({ getJSON, baixar, emParalelo, gravarJSON, log, DIR_DADOS, CONCORRENCIA });
     agendar('2', brasilMin, () => gov.sincronizar(), 'governador');
   }
+  // eleições suplementares do dia (prefeitos etc.), lidas da configuração do TSE
+  if (process.env.SUPLEMENTARES !== '0') {
+    const sup = require('./suplementares').criar({ getJSON, baixar, gravarJSON, log, DIR_DADOS });
+    agendar('2', brasilMin, () => sup.sincronizar(), 'suplementares');
+  }
   log(`sincronização ativa: turnos ${turnos.join(', ')}; Brasil a cada ${brasilMin * 60} s, exterior a cada ${min} min (1º turno a cada ${Math.max(min, 60)} min)`);
 }
 

@@ -289,6 +289,7 @@ async function atualizar() {
       if (uf) await carregarMunicipiosUF(uf).catch(e => console.warn(e));
       if (cfg.turno === '2') { // governador no 2º turno (estados com 2º turno)
         try { const rg = await fetch('dados/gov-2.json', { cache: 'no-cache' }); if (rg.ok) gov = await rg.json(); } catch { /* sem governador */ }
+        try { const rs = await fetch('dados/sup-hoje.json', { cache: 'no-cache' }); if (rs.ok) suplementares = (await rs.json()).eleicoes || []; } catch { /* sem suplementares */ }
       }
       projecao = null;
       if (cfg.turno === '2') {
@@ -870,6 +871,24 @@ function render() {
     `<div>${iconeSel(sel)} ${esc(nomeSel(sel))}</div>` + (r.validos ? `<small>${fmt(d.comp)} votantes · ${pct(r.pctSec)} das seções</small>` : '<small>sem votos apurados</small>');
 }
 
+// diferença de votos entre o 1º e o 2º colocados (lista ordenada por votos)
+function diferenca(lista) {
+  const [a, b] = lista || [];
+  if (!a || !b || !(a.votos > 0)) return null;
+  return { lider: a, votos: a.votos - b.votos, pontos: a.pct - b.pct };
+}
+function htmlDiferenca(lista) {
+  const d = diferenca(lista);
+  if (!d) return '';
+  if (d.votos === 0) return '<div class="duelo-dif">Empate em votos</div>';
+  return `<div class="duelo-dif"><span style="color:${d.lider.cor}">${esc(d.lider.nome)}</span> à frente por <b>${fmt(d.votos)} votos</b> · ${d.pontos.toLocaleString('pt-BR', { maximumFractionDigits: 2, minimumFractionDigits: 2 })} ponto${Math.abs(d.pontos) >= 2 ? 's' : ''}</div>`;
+}
+// versão curta para listas: " · dif. 1.234"
+function difCurta(lista) {
+  const d = diferenca(lista);
+  return d ? ` <span class="rk-dif" title="Diferença entre o 1º e o 2º colocados">· dif. ${fmt(d.votos)}</span>` : '';
+}
+
 // "25/10/2026 17:06:31" (horário de Brasília) do total oficial do país -> { data, texto }
 function horaTSE() {
   const m = /^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})/.exec(brasil?.hora || '');
@@ -903,7 +922,7 @@ function renderPlacar(d, r) {
     const pa = tot ? 100 * a.votos / tot : 50;
     el.className = 'duelo';
     el.innerHTML = `<div class="duelo-lados">${lado(a, 'esq')}<div class="vs">×</div>${lado(b, 'dir')}</div>
-      <div class="duelo-barra"><div style="width:${pa}%;background:${a.cor}"></div><div style="width:${100 - pa}%;background:${b.cor}"></div><i></i></div>` + htmlProjecao();
+      <div class="duelo-barra"><div style="width:${pa}%;background:${a.cor}"></div><div style="width:${100 - pa}%;background:${b.cor}"></div><i></i></div>` + htmlDiferenca(r.lista) + htmlProjecao();
   } else {
     el.className = 'barras';
     const max = Math.max(1, ...r.lista.map(c => c.pct));
@@ -913,7 +932,7 @@ function renderPlacar(d, r) {
         <div class="bc-info"><div class="bc-nome">${esc(c.nome)} <small>${esc(c.n)} · ${esc(c.partido)}</small></div>
           <div class="bc-trilho"><div style="width:${100 * c.pct / max}%"></div></div></div>
         <div class="bc-num"><b>${pct(c.pct, 2)}</b><small>${fmt(c.votos)}</small></div>
-      </div>`).join('');
+      </div>`).join('') + htmlDiferenca(r.lista);
   }
 }
 
@@ -1058,7 +1077,7 @@ function renderRanking() {
       ? i.r.lista.filter(c => c.votos > 0).map(c => `<div title="${esc(c.nome)} ${pct(c.pct)}" style="width:${c.pct}%;background:${c.cor}"></div>`).join('')
       : '';
     const lider = i.r.lider ? `<span class="rk-lider" style="color:${i.r.lider.cor}">${esc(i.r.lider.nome)} ${pct(i.r.lider.pct)}</span>` : '<span class="rk-lider sem">aguardando</span>';
-    const tops = i.r.validos ? i.r.lista.slice(0, cands.length === 2 ? 2 : 3).map(c => `<span style="color:${c.cor}">${fmt(c.votos)}</span>`).join(' · ') : '';
+    const tops = i.r.validos ? i.r.lista.slice(0, cands.length === 2 ? 2 : 3).map(c => `<span style="color:${c.cor}">${fmt(c.votos)}</span>`).join(' · ') + difCurta(i.r.lista) : '';
     return `<li data-idx="${idx}" class="${i.s ? 'clicavel' : ''} ${i.chave === atual ? 'atual' : ''}">
       <div class="rk-pos">${idx + 1}</div>
       <div class="rk-corpo">

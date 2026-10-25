@@ -106,7 +106,7 @@ function dueloHTML(r) {
   const [e, dir] = [a, b];
   const tot = e.votos + dir.votos, pe = tot ? 100 * e.votos / tot : 50;
   return `<div class="duelo-lados">${lado(e, 'esq')}<div class="vs">×</div>${lado(dir, 'dir')}</div>
-    <div class="duelo-barra"><div style="width:${pe}%;background:${e.cor}"></div><div style="width:${100 - pe}%;background:${dir.cor}"></div><i></i></div>`;
+    <div class="duelo-barra"><div style="width:${pe}%;background:${e.cor}"></div><div style="width:${100 - pe}%;background:${dir.cor}"></div><i></i></div>` + htmlDiferenca(r.lista);
 }
 
 function renderPlacarGov(uf, d, r) {
@@ -219,7 +219,7 @@ function renderRankingGov(uf) {
   ol.innerHTML = itens.map((i, idx) => {
     const barras = i.r.validos ? i.r.lista.map(c => `<div style="width:${c.pct}%;background:${c.cor}"></div>`).join('') : '';
     const lider = i.r.lider ? `<span class="rk-lider" style="color:${i.r.lider.cor}">${esc(i.r.lider.nome)} ${pct(i.r.lider.pct)}</span>` : '<span class="rk-lider sem">aguardando</span>';
-    const tops = i.r.validos ? i.r.lista.map(c => `<span style="color:${c.cor}">${fmt(c.votos)}</span>`).join(' · ') : '';
+    const tops = i.r.validos ? i.r.lista.map(c => `<span style="color:${c.cor}">${fmt(c.votos)}</span>`).join(' · ') + difCurta(i.r.lista) : '';
     return `<li data-idx="${idx}" class="clicavel ${i.chave === atual ? 'atual' : ''}"><div class="rk-pos">${idx + 1}</div><div class="rk-corpo">
       <div class="rk-linha1">${i.icone}<span class="rk-nome">${i.nome}</span>${lider}</div><div class="rk-barra">${barras}</div>
       <div class="rk-linha2"><span>${tops}</span><span>${fmt(i.d.comp)} votantes · ${pct(i.r.pctSec, 0)} seç.</span></div></div></li>`;
