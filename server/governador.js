@@ -73,7 +73,8 @@ function criar({ getJSON, baixar, emParalelo, gravarJSON, log, DIR_DADOS, CONCOR
       try { j = await getJSON(`${base}/${u}/${u}-c${pad(CARGO, 4)}-e${pad(ELE, 6)}-u.json`); } catch (er) { falhas++; continue; }
       const e = (estado.ufs[uf] ||= { municipios: {}, versoes: {} });
       const total = oficialDe(j);
-      if (e.total && e.total.hora === total.hora && e.candidatos?.length && e.candidatos.every(c => 'st' in c)) continue; // nada novo nessa UF
+      // nada novo nessa UF (e nenhum município ficou com cópia antiga do CDN na passada anterior)
+      if (e.total && e.total.hora === total.hora && e.candidatos?.length && e.candidatos.every(c => 'st' in c) && !e.munAtrasados) continue;
       e.candidatos = candidatosDe(j);
       e.total = total;
       mudou = true;
@@ -85,15 +86,21 @@ function criar({ getJSON, baixar, emParalelo, gravarJSON, log, DIR_DADOS, CONCOR
       for (const a of ab.abr || []) {
         if (a.tpabr !== 'mun' || !(+a.s?.st > 0)) continue;
         const v = `${a.s.st}|${a.dt} ${a.ht}|${a.e?.c}`;
-        if (e.versoes[a.cdabr] !== v) fila.push([a.cdabr, v]);
+        if (e.versoes[a.cdabr] !== v || (e.municipios[a.cdabr]?.secRec || 0) < +a.s.st) fila.push([a.cdabr, v, +a.s.st]);
       }
-      falhas += await emParalelo(fila, CONCORRENCIA, async ([cd, v]) => {
-        const m = oficialDe(await getJSON(`${base}/${u}/${u}${cd}-c${pad(CARGO, 4)}-e${pad(ELE, 6)}-u.json`));
+      e.munAtrasados = 0;
+      falhas += await emParalelo(fila, CONCORRENCIA, async ([cd, v, st]) => {
+        const url = `${base}/${u}/${u}${cd}-c${pad(CARGO, 4)}-e${pad(ELE, 6)}-u.json`;
+        let m = oficialDe(await getJSON(url));
+        // cópia antiga do CDN: pede de novo furando o cache; se ainda vier atrás, tenta na próxima passada
+        if (m.secRec < st) m = oficialDe(await getJSON(`${url}?t=${Date.now()}`));
         delete m.hora;
+        if (m.secRec < st) { e.munAtrasados++; if (!e.municipios[cd] || e.municipios[cd].secRec < m.secRec) e.municipios[cd] = m; return; }
         e.municipios[cd] = m;
         e.versoes[cd] = v;
         munBaixados++;
       });
+      if (e.munAtrasados) mudou = true;
     }
     if (mudou) {
       publicar();

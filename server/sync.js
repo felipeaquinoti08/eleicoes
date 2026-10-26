@@ -309,7 +309,7 @@ async function sincronizarMunicipios(n) {
   const T = TURNOS[n];
   const est = estadoMunDo(n);
   const inicio = Date.now();
-  let baixados = 0, erros = 0;
+  let baixados = 0, erros = 0, velhos = 0;
   // capitais e UFs mais populosas primeiro
   const ordem = ["SP","MG","RJ","BA","PR","RS","PE","CE","PA","SC","GO","MA","AM","ES","PB","RN","MT","AL","PI","DF","MS","SE","RO","TO","AC","AP","RR"];
   for (const uf of ordem) {
@@ -321,20 +321,31 @@ async function sincronizarMunicipios(n) {
     for (const a of ab.abr || []) {
       if (a.tpabr !== "mun" || !a.s || !(+a.s.st > 0)) continue;
       const versao = `${a.s.st}|${a.dt} ${a.ht}|${a.e?.c}`;
-      if (mun[a.cdabr]?.v !== versao) fila.push({ cd: a.cdabr, versao });
+      const atual = mun[a.cdabr];
+      // entra na fila se mudou OU se o que temos está atrás do agregado (cópia velha do CDN gravada antes)
+      if (atual?.v !== versao || (atual.secRec || 0) < +a.s.st) fila.push({ cd: a.cdabr, versao, st: +a.s.st });
     }
     if (!fila.length) continue;
     erros += await emParalelo(fila, CONCORRENCIA, async it => {
-      const r = oficialDe(await getLote(`${BASE}/${T.ele}/dados/${u}/${u}${it.cd}-c0001-e${pad(T.ele, 6)}-u.json`));
+      const url = `${BASE}/${T.ele}/dados/${u}/${u}${it.cd}-c0001-e${pad(T.ele, 6)}-u.json`;
+      let r = oficialDe(await getLote(url));
+      // o CDN do TSE às vezes devolve uma cópia antiga do arquivo do município: confere com o agregado do
+      // estado e, se vier atrás, pede de novo furando o cache
+      if (r.secRec < it.st) r = oficialDe(await getLote(`${url}?t=${Date.now()}`));
+      if (r.secRec < it.st) {
+        velhos++;
+        if (!mun[it.cd] || mun[it.cd].secRec < r.secRec) mun[it.cd] = { ...r, v: null }; // guarda o melhor, sem marcar como em dia
+        return;
+      }
       mun[it.cd] = { ...r, v: it.versao };
       baixados++;
     });
     gravarJSON(path.join(DIR_DADOS, `turno-${n}-mun-${uf}.json`), { gerado: new Date().toISOString(), uf, municipios: mun });
     gravarJSON(path.join(DIR_DADOS, `cache-mun-${n}.json`), est);
   }
-  if (baixados || erros) log(`turno ${n}: municípios ${baixados} atualizados, ${erros} falhas em ${((Date.now() - inicio) / 1000).toFixed(0)}s`);
+  if (baixados || erros || velhos) log(`turno ${n}: municípios ${baixados} atualizados, ${velhos} ainda com cópia antiga do TSE (nova tentativa na próxima passada), ${erros} falhas em ${((Date.now() - inicio) / 1000).toFixed(0)}s`);
   const comDados = Object.values(est).reduce((a, m) => a + Object.keys(m).length, 0);
-  return { municipiosComDados: comDados, atualizadosNestaPassada: baixados, falhas: erros };
+  return { municipiosComDados: comDados, atualizadosNestaPassada: baixados, aguardandoCopiaNova: velhos, falhas: erros };
 }
 
 // ---------------------------------------------------------------- projeção do 2º turno
@@ -438,7 +449,7 @@ function iniciar() {
 }
 
 const sincronizarTurno = async n => { await sincronizarNacional(n); await sincronizarExterior(n); };
-module.exports = { iniciar, sincronizarTurno, status };
+module.exports = { iniciar, sincronizarTurno, sincronizarMunicipios, status };
 if (require.main === module) {
   if (process.argv[2] === '--uma-vez') {
     fs.mkdirSync(DIR_DADOS, { recursive: true });

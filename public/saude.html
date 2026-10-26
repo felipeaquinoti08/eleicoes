@@ -79,6 +79,7 @@ function cartaoColeta(nome, c) {
   if (c.oficialApuradas != null) add('Oficial do exterior', fmt(c.oficialApuradas) + ' seções');
   if (c.municipiosComDados != null) add('Municípios com dados', fmt(c.municipiosComDados));
   if (c.atualizadosNestaPassada != null) add('Atualizados na passada', fmt(c.atualizadosNestaPassada));
+  if (c.aguardandoCopiaNova) add('Com cópia antiga do TSE', fmt(c.aguardandoCopiaNova) + ' (nova tentativa na próxima passada)');
   if (c.disponivel != null) add('Projeção disponível', c.disponivel ? 'sim' : 'ainda não');
   if (c.pesoApurado != null) add('Eleitorado apurado', c.pesoApurado + '%');
   return `<div class="cartao"><h3><span class="bola ${e}"></span>${NOMES[nome] || nome}</h3><dl>${linhas.join('')}</dl>` +
