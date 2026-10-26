@@ -2,6 +2,19 @@
 
 Painel ao vivo da apuração das Eleições 2026 com dados públicos do TSE: Brasil (estado e município) e exterior (continente, país, cidade e seção) num mesmo mapa clicável, com projeção do resultado final, filtros e sinal sonoro quando chegam dados novos. Funciona no navegador, no celular e na TV, e tem um modo para transmissão ao vivo.
 
+## Acesse sem instalar nada
+
+**👉 https://eleicoes.felipeaquino.eti.br**
+
+Se você só quer acompanhar a apuração ou consultar o histórico, não precisa fazer deploy: o painel está no ar nesse endereço, com os mesmos recursos deste repositório (mapa, filtros, histórico das últimas eleições, modos TV e live). O restante deste README é para quem quer rodar a própria instalação.
+
+| Endereço | O que abre |
+|---|---|
+| https://eleicoes.felipeaquino.eti.br | Painel (modo completo) |
+| https://eleicoes.felipeaquino.eti.br/?modo=tv | Modo TV, com tour automático |
+| https://eleicoes.felipeaquino.eti.br/?modo=live | Modo live, vertical 9:16 |
+| https://eleicoes.felipeaquino.eti.br/historico.html | Histórico das eleições |
+
 > **Repositório público.** Este código é aberto e qualquer pessoa pode ler, copiar e rodar o painel: https://github.com/felipeaquinoti08/eleicoes
 > Os dados exibidos são públicos (TSE e IBGE). O repositório não guarda credenciais: configurações do seu servidor ficam no arquivo `.env` e os dados coletados no volume `dados`, e **nenhum dos dois vai para o git** (estão no `.gitignore`). Não faça commit de senhas, tokens, certificados ou do `.env`.
 
