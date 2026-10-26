@@ -244,6 +244,13 @@ async function abrirPublico(nome) {
   return { corpo: Buffer.from(await r.arrayBuffer()), tipo: r.headers.get('content-type') || tipoDe(nome), cache: r.headers.get('cache-control') || cacheDe(nome) };
 }
 
+// espera a fila de envio esvaziar (usado por scripts, como a migração); true se tudo foi enviado
+async function aguardarEnvios(limiteMs = 30 * 60 * 1000) {
+  const fim = Date.now() + limiteMs;
+  while ((fila.size || enviando) && Date.now() < fim) await new Promise(r => setTimeout(r, 500));
+  return !fila.size;
+}
+
 function status() {
   const s = { modo: MODO, iniciado: st.iniciado };
   if (MODO === 'local') return s;
@@ -257,4 +264,4 @@ function status() {
   };
 }
 
-module.exports = { MODO, DIR_DADOS, iniciar, gravar, gravarJSON, lerJSON, lerJSONAsync, existe, quando, listar, md5, info, abrirPublico, status, cacheDe };
+module.exports = { MODO, DIR_DADOS, iniciar, gravar, gravarJSON, lerJSON, lerJSONAsync, existe, quando, listar, md5, info, abrirPublico, aguardarEnvios, status, cacheDe };

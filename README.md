@@ -15,6 +15,8 @@ Se você só quer acompanhar a apuração ou consultar o histórico, não precis
 | https://eleicoes.felipeaquino.eti.br/?modo=live | Modo live, vertical 9:16 |
 | https://eleicoes.felipeaquino.eti.br/historico.html | Histórico das eleições |
 
+No site público, os dados ficam no Azure Blob e chegam ao navegador pelo cache do Cloudflare (caminho 2 da seção [Armazenamento no Azure Blob](#armazenamento-no-azure-blob-opcional)).
+
 > **Repositório público.** Este código é aberto e qualquer pessoa pode ler, copiar e rodar o painel: https://github.com/felipeaquinoti08/eleicoes
 > Os dados exibidos são públicos (TSE e IBGE). O repositório não guarda credenciais: configurações do seu servidor ficam no arquivo `.env` e os dados coletados no volume `dados`, e **nenhum dos dois vai para o git** (estão no `.gitignore`). Não faça commit de senhas, tokens, certificados ou do `.env`.
 
@@ -115,7 +117,12 @@ No Brasil a fonte é sempre a totalização oficial, já que baixar os cerca de 
 ## Arquitetura
 
 ```
+Modo local (padrão):
 TSE ──► server/sync.js (job) ──► dados/*.json ──► server/server.js ──► Nginx Proxy Manager ──► Cloudflare ──► navegadores
+
+Com Azure Blob:
+TSE ──► server/sync.js (job) ──► Azure Blob ──► Cloudflare (cache) ──► navegadores   (dados)
+                                 server/server.js ──► Nginx Proxy Manager ──► Cloudflare ──► navegadores   (páginas, /saude)
 ```
 
 - O **job de sincronização** é o único cliente que fala com o TSE. A cada ciclo (5 min por padrão) baixa o total do país, as 27 UFs, o exterior e os BUs novos. Os municípios rodam num loop separado e incremental: o arquivo agregado de cada UF diz quais municípios mudaram, e só esses são baixados.
@@ -156,6 +163,8 @@ docker inspect --format "{{.State.Health.Status}}" apuracao-eleicoes   # healthy
 No `.env`: `NPM_REDE` (rede do Nginx Proxy Manager, obrigatória) e `DADOS` (opcional, pasta absoluta para os dados no lugar do volume). As variáveis do Azure Blob (`AZURE_*` e `DADOS_URL_PUBLICA`) também ficam no `.env`; veja a seção [Armazenamento no Azure Blob](#armazenamento-no-azure-blob-opcional).
 
 ### Dados persistentes entre deploys
+
+> Com o [Azure Blob](#armazenamento-no-azure-blob-opcional) configurado, a persistência fica no Blob: o volume não é usado e pode ser removido. O que segue vale para o modo local.
 
 Os resultados coletados ficam no **volume Docker `<projeto>_dados`** (com `-p eleicoes`, o volume `eleicoes_dados`). O volume sobrevive a `git pull`, rebuild e redeploy, e o servidor entrega o que já está nele assim que sobe. Ao iniciar, o log mostra o que está sendo servido:
 
@@ -342,9 +351,37 @@ Deixe `DADOS_URL_PUBLICA` vazio. O navegador continua pedindo `/dados/...` ao se
 
 Outra CDN também serve, desde que consiga acrescentar uma query string fixa (o SAS) às requisições para a origem e fazer cache respeitando o `Cache-Control`. A configuração segue a mesma lógica do caminho 2. Não recomendo tornar o container público: qualquer pessoa poderia chamar o Blob direto, fora do cache, e a conta de tráfego seria sua.
 
-### Passo 3: ligar no servidor
+### Passo 3: levar os dados que já foram coletados (se já rodava no modo local)
+
+Se o painel já rodava no modo local, copie para o Blob o que está no volume **antes** do primeiro deploy com Azure. Sem isso, o servidor começa com o Blob vazio e baixa do TSE todos os municípios de novo: são milhares de arquivos, o que gera uma onda de HTTP 429 até a carga terminar (normalmente menos de uma hora). Os resultados nacional e por estado aparecem na hora mesmo assim.
+
+Com o `.env` já preenchido (passo 4) e o container antigo ainda no modo local:
+```bash
+docker compose run --rm --no-deps -v eleicoes_dados:/migrar painel node server/migrar-para-azure.js /migrar
+```
+O script envia tudo o que está no volume (snapshots, estado da coleta, fotos, histórico baixado) e não sobrescreve o que já estiver no Blob. Rodar de novo é seguro, porque ele envia só o que falta. Troque `eleicoes_dados` se o seu projeto tiver outro nome (`docker volume ls`).
+
+### Passo 4: ligar no servidor
 
 Preencha no `.env` as linhas mostradas pelo script e o `DADOS_URL_PUBLICA`, e faça o redeploy. Na primeira subida, o servidor envia ao Blob o histórico embutido na imagem (cerca de 880 arquivos, uma vez só) e passa a gravar a apuração lá. No `/saude`, o card **💾 Armazenamento** mostra a conta, de onde o navegador lê, os envios pendentes, a última gravação e quantos dias faltam para o segredo vencer.
+
+O log da subida deve mostrar:
+```
+painel em http://0.0.0.0:8080/ (dados: Azure Blob, lidos pelo navegador em https://dados-eleicoes.seu-dominio/eleicoes/)
+[armazenamento] Azure Blob (<conta>): N arquivos, estado da coleta carregado (N arquivos)
+[histórico] base embutida enviada ao Azure Blob: 877 arquivos      ← só na primeira vez
+```
+
+Para conferir de fora:
+```bash
+curl -sI https://dados-eleicoes.seu-dominio/eleicoes/turno-2.json | grep -iE "^HTTP|cf-cache-status|access-control"
+# 200, access-control-allow-origin com o endereço do painel e, a partir da 2ª chamada, cf-cache-status: HIT
+curl -sI https://dados-eleicoes.seu-dominio/eleicoes-interno/cache-mun-2.json | head -1
+# 403: o estado interno não é acessível pela CDN
+```
+No navegador (F12 → Rede), os `.json` do painel vêm de `dados-eleicoes.seu-dominio`.
+
+Depois de alguns dias funcionando, o volume antigo pode ser apagado: `docker volume rm eleicoes_dados`.
 
 - **Se o Azure ficar fora do ar**, a coleta continua, as gravações esperam numa fila com novas tentativas, e o `/saude` mostra os pendentes.
 - **Para voltar ao modo local**, apague as variáveis `AZURE_*` do `.env` e faça o redeploy.
@@ -414,6 +451,7 @@ server/server.js   servidor HTTP (site + snapshots + /saude)
 server/armazenamento.js onde os dados ficam: pasta local ou Azure Blob
 azure/             script e papel personalizado para criar o armazenamento no Azure
 cloudflare/worker.js alternativa às regras do Cloudflare para ler o Blob privado
+server/migrar-para-azure.js copia os dados do volume local para o Azure Blob
 tools/simular-azure.js simulador do Azure Blob para testes, sem conta no Azure
 iniciar.ps1        roda tudo localmente com Node portátil
 ```
