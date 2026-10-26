@@ -92,10 +92,13 @@ async function atualizar() {
 
   const coletas = Object.entries(s.coletas || {}).filter(([k]) => k.startsWith('turno'));
   const estados = coletas.flatMap(([, c]) => Object.values(c).map(estadoColeta));
-  const freio = s.coletas?.freioTSE || {};
+  // dois freios: principal (Brasil, governador, suplementares) e lote (boletins de urna, municípios)
+  const freios = s.coletas?.freioTSE || {};
+  const fp = freios.principal || {}, fl = freios.lote || {};
+  const freio = { pausaAteTSE: fp.pausaAte || fl.pausaAte };
   let geral = 'ok', texto = 'Tudo funcionando';
   if (estados.includes('erro')) { geral = 'erro'; texto = 'Coleta com erro'; }
-  else if (estados.includes('atencao') || freio.pausaAteTSE) { geral = 'atencao'; texto = freio.pausaAteTSE ? 'TSE limitando (429): coleta mais lenta' : 'Atenção'; }
+  else if (estados.includes('atencao') || freio.pausaAteTSE) { geral = 'atencao'; texto = fp.pausaAte ? 'TSE limitando (429) os resultados principais' : fl.pausaAte ? 'TSE limitando (429) os downloads em lote' : 'Atenção'; }
   $('geral').className = 'geral ' + geral;
   $('geral').textContent = texto;
 
@@ -104,7 +107,7 @@ async function atualizar() {
     <div class="cartao"><h3>👥 Online agora</h3><div class="grande">${fmt(s.visitantes?.online)}</div>
       <dl><dt>Pico de hoje</dt><dd>${fmt(s.visitantes?.picoHoje)} ${s.visitantes?.picoEm ? '· ' + new Date(s.visitantes.picoEm).toLocaleTimeString('pt-BR') : ''}</dd></dl></div>
     <div class="cartao"><h3><span class="bola ${freio.pausaAteTSE ? 'atencao' : 'ok'}"></span>Limite do TSE</h3>
-      <dl><dt>Respostas 429 seguidas</dt><dd>${fmt(freio.respostas429Seguidas)}</dd><dt>Pausa até</dt><dd>${freio.pausaAteTSE ? ha(freio.pausaAteTSE) : 'sem pausa'}</dd></dl></div>
+      <dl><dt>Principal (429 seguidos)</dt><dd>${fmt(fp.respostas429Seguidas)} · ${fp.pausaAte ? 'pausa ' + ha(fp.pausaAte) : 'sem pausa'}</dd><dt>Lote (429 seguidos)</dt><dd>${fmt(fl.respostas429Seguidas)} · ${fl.pausaAte ? 'pausa ' + ha(fl.pausaAte) : 'sem pausa'}</dd></dl></div>
     <div class="cartao"><h3>📦 Dados publicados</h3>
       <dl><dt>2º turno</dt><dd>${ha(snap.turno2)}</dd><dt>1º turno</dt><dd>${ha(snap.turno1)}</dd><dt>Histórico</dt><dd>${ha(s.historico)}</dd></dl></div>
     <div class="cartao"><h3>🖥️ Servidor</h3>

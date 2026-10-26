@@ -12,8 +12,11 @@ function criar({ getJSON, baixar, gravarJSON, log, DIR_DADOS }) {
   let lista = null, listaDia = '';
   const estado = {}; // chave -> { hora, ... }
 
-  // data de hoje no fuso de Brasília, no formato do TSE (dd/mm/aaaa)
-  const hojeBR = () => new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date());
+  // hoje no fuso de Brasília (aaaa-mm-dd); entram as suplementares dos últimos DIAS dias (as de hoje, ao vivo)
+  const DIAS = +process.env.SUPLEMENTARES_DIAS || 7;
+  const hojeISO = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+  const hojeBR = hojeISO;
+  const iso = dt => dt.split('/').reverse().join('-');
 
   async function descobrir() {
     const hoje = hojeBR();
@@ -21,7 +24,8 @@ function criar({ getJSON, baixar, gravarJSON, log, DIR_DADOS }) {
     const cfg = await getJSON(`${RAIZ}/comum/config/ele-c.json`);
     const out = [];
     for (const p of cfg.pl || []) {
-      if (p.dt !== hoje) continue;
+      const dias = Math.round((Date.parse(hoje) - Date.parse(iso(p.dt))) / 86400000);
+      if (dias < 0 || dias > DIAS) continue;
       for (const e of p.e || []) {
         if (e.tp !== '4' && e.tp !== '2') continue; // 4 = suplementar municipal, 2 = suplementar estadual
         for (const a of e.abr || []) for (const cp of a.cp || []) {
@@ -29,20 +33,20 @@ function criar({ getJSON, baixar, gravarJSON, log, DIR_DADOS }) {
           const uf = a.cd.toUpperCase();
           const muns = (a.mu || []).map(m => m.cd);
           for (const mun of muns.length ? muns : [null]) {
-            out.push({ ciclo: p.c, ele: +e.cd, nome: e.nm, uf, mun, cargo: +cp.cd, cargoNome: NOME_CARGO[+cp.cd] });
+            out.push({ ciclo: p.c, ele: +e.cd, nome: e.nm, uf, mun, cargo: +cp.cd, cargoNome: NOME_CARGO[+cp.cd], data: iso(p.dt), hoje: dias === 0 });
           }
         }
       }
     }
     lista = out; listaDia = hoje;
-    if (out.length) log(`suplementares de hoje: ${out.map(x => `${x.cargoNome} ${x.nome.replace('Eleição Suplementar - ', '')} (${x.uf})`).join(', ')}`);
+    if (out.length) log(`suplementares recentes: ${out.map(x => `${x.cargoNome} ${x.nome.replace('Eleição Suplementar - ', '')} (${x.uf})`).join(', ')}`);
     return out;
   }
 
   const candidatosDe = j => {
     const out = [];
     for (const a of j.carg?.[0]?.agr || []) for (const p of a.par || []) for (const c of p.cand || []) {
-      out.push({ n: c.n, nome: c.nmu, partido: p.sg, sq: c.sqcand, vap: +c.vap, eleito: c.e === 's' && /eleit/i.test(c.st || '') && !/não eleit/i.test(c.st || '') });
+      out.push({ n: c.n, nome: c.nmu, partido: p.sg, sq: c.sqcand, vap: +c.vap, st: c.st || '', eleito: /eleit/i.test(c.st || '') && !/não eleit/i.test(c.st || '') });
     }
     return out;
   };

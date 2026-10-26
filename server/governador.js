@@ -31,7 +31,7 @@ function criar({ getJSON, baixar, emParalelo, gravarJSON, log, DIR_DADOS, CONCOR
   const candidatosDe = j => {
     const out = [];
     for (const a of j.carg?.[0]?.agr || []) for (const p of a.par || []) for (const c of p.cand || []) {
-      out.push({ n: c.n, nome: c.nmu, partido: p.sg, sq: c.sqcand, vice: c.vs?.[0]?.nmu || '' });
+      out.push({ n: c.n, nome: c.nmu, partido: p.sg, sq: c.sqcand, vice: c.vs?.[0]?.nmu || '', st: c.st || '', eleito: /eleit/i.test(c.st || '') && !/não eleit/i.test(c.st || '') });
     }
     return out.sort((a, b) => a.n - b.n);
   };
@@ -73,7 +73,7 @@ function criar({ getJSON, baixar, emParalelo, gravarJSON, log, DIR_DADOS, CONCOR
       try { j = await getJSON(`${base}/${u}/${u}-c${pad(CARGO, 4)}-e${pad(ELE, 6)}-u.json`); } catch (er) { falhas++; continue; }
       const e = (estado.ufs[uf] ||= { municipios: {}, versoes: {} });
       const total = oficialDe(j);
-      if (e.total && e.total.hora === total.hora && e.candidatos?.length) continue; // nada novo nessa UF
+      if (e.total && e.total.hora === total.hora && e.candidatos?.length && e.candidatos.every(c => 'st' in c)) continue; // nada novo nessa UF
       e.candidatos = candidatosDe(j);
       e.total = total;
       mudou = true;

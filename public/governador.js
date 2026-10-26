@@ -82,6 +82,7 @@ function renderGov() {
   $('continentes').innerHTML = chips.map(([s, n], i) => `<button data-i="${i}" class="${(s.tipo === 'govs' && !uf) || s.id === uf ? 'ativa' : ''}">${esc(n)}</button>`).join('');
   $('continentes').querySelectorAll('button').forEach(b => b.onclick = () => selecionar(chips[+b.dataset.i][0]));
 
+  atualizarSeloAoVivo();
   renderPlacarGov(uf, d, r);
   renderEstatisticasGov(d, r);
   renderMapaGov();
@@ -99,7 +100,7 @@ function dueloHTML(r) {
   const lado = (c, cls) => `
     <div class="duelo-cand ${cls} ${r.lider && r.lider.n === c.n ? 'lider' : ''}" style="--cor:${c.cor}">
       ${imgFoto(c)}
-      <div class="info"><div class="nome">${esc(c.nome)}</div><div class="partido">${esc(c.n)} · ${esc(c.partido)}</div>
+      <div class="info"><div class="nome">${esc(c.nome)}${seloEleito(c)}</div><div class="partido">${esc(c.n)} · ${esc(c.partido)}</div>
         <div class="pct">${pct(c.pct, 2)}</div><div class="votos">${fmt(c.votos)} votos</div></div>
     </div>`;
   // à esquerda sempre quem está na frente (r.lista já vem ordenada por votos)

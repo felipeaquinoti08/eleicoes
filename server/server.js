@@ -93,7 +93,12 @@ setInterval(contarOnline, 30 * 1000).unref();
 function resolver(urlPath) {
   const p = decodeURIComponent(urlPath.split('?')[0]);
   if (/^\/dados\/(turno-[12](-mun-[A-Z]{2})?|projecao-2|gov-2|sup-hoje)\.json$/.test(p)) return { arq: path.join(DIR_DADOS, path.basename(p)), dados: true };
-  if (/^\/dados\/historico\/[a-z0-9-]+\.json$/.test(p)) return { arq: path.join(DIR_DADOS, 'historico', path.basename(p)), dados: false };
+  if (/^\/dados\/historico\/[a-z0-9-]+\.json$/.test(p)) {
+    // o que foi baixado fica em dados/historico; as eleições antigas vêm embutidas em server/historico-base
+    const baixado = path.join(DIR_DADOS, 'historico', path.basename(p));
+    const embutido = path.join(__dirname, 'historico-base', path.basename(p));
+    return { arq: fs.existsSync(baixado) ? baixado : embutido, dados: false };
+  }
   if (/^\/dados\/fotos\/\d+\.jpeg$/.test(p)) return { arq: path.join(DIR_DADOS, 'fotos', path.basename(p)), dados: false };
   const rel = p === '/' ? 'index.html' : p.slice(1);
   const arq = path.resolve(DIR_PUBLIC, rel);

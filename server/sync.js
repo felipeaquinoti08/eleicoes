@@ -21,25 +21,31 @@ const log = (...a) => console.log(new Date().toISOString(), ...a);
 
 // Freio global: quando o TSE responde 429, todas as requisições esperam juntas (em vez de cada uma
 // insistir sozinha), e a espera cresce enquanto os 429 continuam. Um IP que insiste demais fica bloqueado.
-let pausaAte = 0, seguidos429 = 0;
-async function baixar(url, tentativas = +process.env.TENTATIVAS || 15) {
+// Dois freios independentes: "lote" (boletins de urna e municípios, milhares de arquivos) e "principal" (Brasil,
+// governador, suplementares). Assim uma avalanche de 429 nos lotes não segura a atualização dos resultados principais.
+const freios = { principal: { pausaAte: 0, seguidos: 0 }, lote: { pausaAte: 0, seguidos: 0 } };
+async function baixar(url, tentativas = +process.env.TENTATIVAS || 15, grupo = 'principal') {
+  const f = freios[grupo] || freios.principal;
   for (let i = 0; ; i++) {
-    const falta = pausaAte - Date.now();
+    const falta = f.pausaAte - Date.now();
     if (falta > 0) await espera(falta + Math.random() * 500);
     let r = null;
     try { r = await fetch(url, { headers: { 'User-Agent': 'apuracao-eleicoes/1.0' } }); } catch (e) { if (i >= tentativas - 1) throw e; }
-    if (r && r.ok) { seguidos429 = Math.max(0, seguidos429 - 1); return r; }
+    if (r && r.ok) { f.seguidos = Math.max(0, f.seguidos - 1); return r; }
     if (r && r.status !== 429 && r.status < 500) throw Object.assign(new Error(r.status + ' ' + url), { status: r.status });
     if (r && r.status === 429) {
-      seguidos429++;
-      pausaAte = Math.max(pausaAte, Date.now() + Math.min(60000, 1000 * 1.5 ** Math.min(seguidos429, 12)));
+      f.seguidos++;
+      // o freio principal espera menos: são poucos arquivos e precisam chegar logo
+      const teto = grupo === 'lote' ? 60000 : 8000;
+      f.pausaAte = Math.max(f.pausaAte, Date.now() + Math.min(teto, 1000 * 1.5 ** Math.min(f.seguidos, 12)));
     }
     if (i >= tentativas - 1) throw new Error((r ? r.status : 'rede') + ' ' + url);
     await espera(Math.min(20000, 1000 * 1.6 ** i) + Math.random() * 1000);
   }
 }
-const statusFreio = () => ({ pausaAteTSE: pausaAte > Date.now() ? new Date(pausaAte).toISOString() : null, respostas429Seguidas: seguidos429 });
-const getJSON = async url => (await baixar(url)).json();
+const statusFreio = () => Object.fromEntries(Object.entries(freios).map(([k, f]) => [k, { pausaAte: f.pausaAte > Date.now() ? new Date(f.pausaAte).toISOString() : null, respostas429Seguidas: f.seguidos }]));
+const getJSON = async (url, grupo) => (await baixar(url, undefined, grupo)).json();
+const getLote = url => getJSON(url, 'lote');
 
 async function emParalelo(itens, limite, fn) {
   let i = 0, erros = 0;
@@ -107,10 +113,38 @@ const estados = {};
 function estadoDo(n) {
   if (!estados[n]) {
     let ant = {};
-    try { ant = JSON.parse(fs.readFileSync(path.join(DIR_DADOS, `turno-${n}.json`), "utf8")); } catch { /* primeiro uso */ }
-    estados[n] = { candidatos: ant.candidatos || [], ofExterior: ant.ofExterior || null, brasil: ant.brasil || null, ufs: ant.ufs || {}, cidades: ant.cidades || {} };
+    try { ant = JSON.parse(fs.readFileSync(path.join(DIR_DADOS, `turno-${n}.json`), "utf8")); } catch { ant = sementeDoHistorico(n) || {}; }
+    estados[n] = { candidatos: ant.candidatos || [], ofExterior: ant.ofExterior || null, brasil: ant.brasil || null, ufs: ant.ufs || {}, cidades: ant.cidades || {}, situacao: ant.situacao || null, situacaoBR: ant.situacaoBR || {} };
+    if (ant.semente) { log(`turno ${n}: sem dados gravados, começando pelo resultado do histórico embutido`); setImmediate(() => publicar(n)); }
   }
   return estados[n];
+}
+
+// Deploy do zero (pasta de dados vazia): se a eleição do turno já está no histórico embutido, monta o resultado
+// inicial (país, estados e exterior) a partir dele, para o painel não abrir vazio enquanto o TSE limita requisições.
+function sementeDoHistorico(n) {
+  try {
+    const ano = BASE.match(/ele(\d{4})/)[1];
+    const doc = JSON.parse(fs.readFileSync(path.join(__dirname, 'historico-base', `${ano}-${n}t-federal.json`), 'utf8'));
+    const pres = doc.cargos.find(c => c.cd === 1);
+    if (!pres) return null;
+    const total = l => ({
+      secTot: l.secTot, secRec: l.secRec, aptos: l.aptos, comp: l.comp, brancos: l.brancos, nulos: l.nulos,
+      votos: Object.fromEntries(l.cands.map(c => [c.n, c.votos])), hora: null,
+    });
+    const br = pres.locais.find(l => l.uf === 'BR');
+    const zz = pres.locais.find(l => l.uf === 'ZZ');
+    if (!br) return null;
+    return {
+      semente: true,
+      candidatos: br.cands.map(c => ({ n: c.n, nome: c.nome, partido: c.partido, sq: c.sq || null })).sort((a, b) => a.n - b.n),
+      brasil: total(br), ofExterior: zz ? total(zz) : null,
+      ufs: Object.fromEntries(pres.locais.filter(l => UFS.includes(l.uf)).map(l => [l.uf, total(l)])),
+      situacaoBR: Object.fromEntries(br.cands.map(c => [c.n, c.st || ''])),
+      // o histórico só guarda como completa uma eleição com a apuração encerrada
+      situacao: doc.completo ? { aoVivo: false, dataEleicao: doc.data, finalizada: true, verificadoEm: new Date().toISOString() } : null,
+    };
+  } catch { return null; }
 }
 function publicar(n) {
   const T = TURNOS[n], e = estadoDo(n);
@@ -121,6 +155,32 @@ function publicar(n) {
 const fotosEmAndamento = {};
 // Brasil: roda a cada SYNC_BRASIL_S (30 s). Primeiro baixa só o total do país, que diz quando o TSE gerou o
 // último dado; as 27 UFs só são baixadas quando esse horário muda (ou a cada 10 min, por garantia).
+// ---------------------------------------------------------------- ao vivo ou resultados
+// A eleição está "ao vivo" no dia da votação e, depois dele (até 3 dias), enquanto a apuração não chegar a 100%.
+// Fora disso o painel mostra "Resultados". A data de cada eleição vem da configuração do TSE.
+let datasEleicao = { em: 0, mapa: {} };
+async function dataDaEleicao(ele) {
+  if (Date.now() - datasEleicao.em > 60 * 60 * 1000) {
+    try {
+      const cfg = await getJSON('https://resultados.tse.jus.br/oficial/comum/config/ele-c.json');
+      const mapa = {};
+      for (const p of cfg.pl || []) for (const e of p.e || []) mapa[e.cd] = p.dt;
+      datasEleicao = { em: Date.now(), mapa };
+    } catch (er) { log('aviso: configuração do TSE indisponível para a data da eleição:', er.message); }
+  }
+  return datasEleicao.mapa[String(ele)] || null;
+}
+const hojeBrasilia = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()); // aaaa-mm-dd
+async function situacaoDoTurno(n, e) {
+  const dt = await dataDaEleicao(TURNOS[n].ele); // dd/mm/aaaa
+  const data = dt ? dt.split('/').reverse().join('-') : null;
+  const hoje = hojeBrasilia();
+  const dias = data ? Math.round((Date.parse(hoje) - Date.parse(data)) / 86400000) : null;
+  const finalizada = !!e.brasil && e.brasil.secTot > 0 && e.brasil.secRec >= e.brasil.secTot;
+  const aoVivo = data !== null && dias >= 0 && (dias === 0 || (dias <= 3 && !finalizada));
+  return { aoVivo, dataEleicao: data, finalizada, verificadoEm: new Date().toISOString() };
+}
+
 const ultimaCompleta = {};
 async function sincronizarNacional(n) {
   const T = TURNOS[n], e = estadoDo(n);
@@ -128,6 +188,14 @@ async function sincronizarNacional(n) {
   let brJ = null;
   try { brJ = await getJSON(`${BASE}/${T.ele}/dados/br/br-c0001-e${pad(T.ele, 6)}-u.json`); } catch (er) { log("aviso brasil:", er.message); }
   const horaTSE = brJ ? `${brJ.dg} ${brJ.hg}` : null;
+  if (brJ) {
+    // situação oficial de cada candidato no país (Eleito, Não eleito, 2º turno), mostrada no placar
+    e.situacaoBR = {};
+    for (const a of brJ.carg?.[0]?.agr || []) for (const p of a.par || []) for (const c of p.cand || []) e.situacaoBR[c.n] = c.st || '';
+  }
+  const situacaoAntes = JSON.stringify(e.situacao || {});
+  e.situacao = await situacaoDoTurno(n, { brasil: brJ ? oficialDe(brJ) : e.brasil });
+  if (JSON.stringify({ ...e.situacao, verificadoEm: 0 }) !== JSON.stringify({ ...JSON.parse(situacaoAntes), verificadoEm: 0 })) publicar(n);
   const temTudo = e.candidatos.length && UFS.every(uf => e.ufs[uf]);
   if (brJ && temTudo && e.brasil?.hora === horaTSE && Date.now() - (ultimaCompleta[n] || 0) < 10 * 60 * 1000) {
     return { ...resumoNacional(e), semNovidade: true }; // o TSE não publicou nada desde a última passada
@@ -169,7 +237,9 @@ async function sincronizarExterior(n) {
   const T = TURNOS[n], e = estadoDo(n);
   const inicio = Date.now();
   const cache = cacheDo(T.pleito);
-  const cs = await getJSON(`${BASE}/arquivo-urna/${T.pleito}/config/zz/zz-p${pad(T.pleito, 6)}-cs.json`);
+  // com a totalização oficial do exterior completa, os boletins não acrescentam nada: não baixa os que faltam
+  const exteriorEncerrado = !!e.ofExterior && e.ofExterior.secTot > 0 && e.ofExterior.secRec >= e.ofExterior.secTot;
+  const cs = await getLote(`${BASE}/arquivo-urna/${T.pleito}/config/zz/zz-p${pad(T.pleito, 6)}-cs.json`);
   const zz = cs.abr ? cs.abr.find(a => a.cd === "zz") : cs;
   const cidades = {};
   const fila = [];
@@ -183,7 +253,7 @@ async function sincronizarExterior(n) {
       const chave = `${mu.cd}-${z.cd}-${s.ns}`;
       const em = cache[chave];
       if (em && em.q === quando) { if (em.r) c.bu[`${z.cd}-${s.ns}`] = em.r; }
-      else fila.push({ mun: mu.cd, zona: z.cd, ns: s.ns, quando, chave, c });
+      else if (!exteriorEncerrado) fila.push({ mun: mu.cd, zona: z.cd, ns: s.ns, quando, chave, c });
     }
   }
   e.cidades = cidades;
@@ -196,12 +266,12 @@ async function sincronizarExterior(n) {
   }, 20000);
   const errosBU = await emParalelo(fila, CONCORRENCIA, async it => {
     const dir = `${BASE}/arquivo-urna/${T.pleito}/dados/zz/${it.mun}/${it.zona}/${it.ns}`;
-    const aux = await getJSON(`${dir}/p${pad(T.pleito, 6)}-zz-m${it.mun}-z${it.zona}-s${it.ns}-aux.json`);
+    const aux = await getLote(`${dir}/p${pad(T.pleito, 6)}-zz-m${it.mun}-z${it.zona}-s${it.ns}-aux.json`);
     const hashes = (aux.hashes || []).filter(h => (h.arq || []).some(a => a.tp === "bu") && !/exclu|cancel/i.test(h.st || ""));
     const h = hashes[hashes.length - 1];
     if (!h) { cache[it.chave] = { q: it.quando, r: null }; return; }
     const nm = h.arq.find(a => a.tp === "bu").nm;
-    const buf = await (await baixar(`${dir}/${h.hash}/${nm}`)).arrayBuffer();
+    const buf = await (await baixar(`${dir}/${h.hash}/${nm}`, undefined, 'lote')).arrayBuffer();
     const r = BU.decodificar(buf, T.ele, 1);
     cache[it.chave] = { q: it.quando, r };
     it.c.bu[`${it.zona}-${it.ns}`] = r;
@@ -213,7 +283,7 @@ async function sincronizarExterior(n) {
   let errosOf = 0;
   if (e.ofExterior && e.ofExterior.secRec > 0) {
     errosOf = await emParalelo(Object.keys(cidades), CONCORRENCIA, async mun => {
-      cidades[mun].of = oficialDe(await getJSON(`${BASE}/${T.ele}/dados/zz/zz${mun}-c0001-e${pad(T.ele, 6)}-u.json`));
+      cidades[mun].of = oficialDe(await getLote(`${BASE}/${T.ele}/dados/zz/zz${mun}-c0001-e${pad(T.ele, 6)}-u.json`));
     });
   }
   publicar(n);
@@ -245,7 +315,7 @@ async function sincronizarMunicipios(n) {
   for (const uf of ordem) {
     const u = uf.toLowerCase();
     let ab;
-    try { ab = await getJSON(`${BASE}/${T.ele}/dados/${u}/${u}-e${pad(T.ele, 6)}-ab.json`); } catch (e) { erros++; continue; }
+    try { ab = await getLote(`${BASE}/${T.ele}/dados/${u}/${u}-e${pad(T.ele, 6)}-ab.json`); } catch (e) { erros++; continue; }
     const mun = (est[uf] ||= {});
     const fila = [];
     for (const a of ab.abr || []) {
@@ -255,7 +325,7 @@ async function sincronizarMunicipios(n) {
     }
     if (!fila.length) continue;
     erros += await emParalelo(fila, CONCORRENCIA, async it => {
-      const r = oficialDe(await getJSON(`${BASE}/${T.ele}/dados/${u}/${u}${it.cd}-c0001-e${pad(T.ele, 6)}-u.json`));
+      const r = oficialDe(await getLote(`${BASE}/${T.ele}/dados/${u}/${u}${it.cd}-c0001-e${pad(T.ele, 6)}-u.json`));
       mun[it.cd] = { ...r, v: it.versao };
       baixados++;
     });

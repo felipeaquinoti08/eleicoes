@@ -71,6 +71,10 @@ let atualizando = false, ultimaAtualizacao = null, timerAtual = null, timerTour 
 let pendentesBU = 0;
 let geracao = 0; // incrementa a cada troca de turno para descartar downloads antigos
 let assinaturaAnterior = null;
+let situacao = null;          // { aoVivo, dataEleicao, finalizada } calculado pelo servidor
+let situacaoBR = {};          // número do candidato -> situação oficial no país (Eleito, Não eleito…)
+// ao vivo no dia da eleição e enquanto a apuração não termina; sem servidor, considera sempre ao vivo
+const aoVivo = () => !modoServidor || !situacao || situacao.aoVivo !== false;
 let projecao = null;          // dados/projecao-2.json (só no modo servidor, 2º turno)
 
 function chaveCache() { return 'bu-' + T.pleito; }
@@ -149,6 +153,8 @@ async function carregarSnapshot() {
   const snap = await r.json();
   definirCandidatos(snap.candidatos);
   ofExterior = snap.ofExterior;
+  situacao = snap.situacao || null;
+  situacaoBR = snap.situacaoBR || {};
   brasil = snap.brasil;
   ufs = snap.ufs || {};
   for (const [cd, sc] of Object.entries(snap.cidades)) {
@@ -343,7 +349,7 @@ let fotoAnterior = null;
 let timerAviso = null;
 
 function avisarNovosDados() {
-  if (!cands.length) return;
+  if (!cands.length || !aoVivo()) return;
   const d = agregarSel({ tipo: 'total' });
   const assinatura = `${cfg.turno}|${d.secRec}|${d.comp}|${Object.values(d.votos).join(',')}`;
   const mudou = assinaturaAnterior !== null && assinatura !== assinaturaAnterior && d.comp > 0;
@@ -852,7 +858,8 @@ function render() {
   const hora = ultimaAtualizacao ? ultimaAtualizacao.toLocaleTimeString('pt-BR') : '–';
   // horário em que o TSE gerou o último dado: deixa claro quando a demora é do TSE e não do painel
   const tse = horaTSE();
-  const parado = tse && cfg.turno === '2' && Date.now() - tse.data > 15 * 60 * 1000;
+  const parado = aoVivo() && tse && cfg.turno === '2' && Date.now() - tse.data > 15 * 60 * 1000;
+  atualizarSeloAoVivo();
   const ondeSel = sel.tipo === 'total' ? '' : ` em ${esc(sel.tipo === 'municipio' ? MUNICIPIOS[sel.id][1] : nomeSel(sel))} · total ${pct(rTot.pctSec, 2)}`;
   $('ultimaAtual').innerHTML = `${fmt(d.secRec)} de ${fmt(d.secTot)} seções${ondeSel} · atualizado ${hora}` +
     (tse ? ` · <span class="${parado ? 'tse-parado' : ''}" title="Horário em que o TSE gerou o último dado publicado">${parado ? '⚠ TSE sem novos dados desde ' : 'dado do TSE das '}${tse.texto}</span>` : '') +
@@ -869,6 +876,21 @@ function render() {
   renderLegenda();
   $('selo').innerHTML = sel.tipo === 'total' ? '' :
     `<div>${iconeSel(sel)} ${esc(nomeSel(sel))}</div>` + (r.validos ? `<small>${fmt(d.comp)} votantes · ${pct(r.pctSec)} das seções</small>` : '<small>sem votos apurados</small>');
+}
+
+// selo "ELEITO" pela situação oficial do TSE: candidatos de governador/prefeito trazem a própria situação (st);
+// os de presidente usam a situação no país (situacaoBR)
+function seloEleito(c) {
+  const st = 'st' in c ? c.st : situacaoBR[c.n];
+  return /^eleit/i.test(st || '') ? ' <span class="selo-eleito">✓ ELEITO</span>' : '';
+}
+// selo do cabeçalho: AO VIVO durante a eleição, RESULTADO depois que a apuração termina
+function atualizarSeloAoVivo() {
+  const el = $('seloAoVivo');
+  const vivo = aoVivo();
+  el.classList.toggle('resultado', !vivo);
+  el.innerHTML = vivo ? '<i></i>AO VIVO' : (situacao?.finalizada ? 'RESULTADO FINAL' : 'RESULTADO');
+  document.title = vivo ? 'Apuração de Eleições · ao vivo' : 'Resultados · Apuração de Eleições';
 }
 
 // diferença de votos entre o 1º e o 2º colocados (lista ordenada por votos)
@@ -912,7 +934,7 @@ function renderPlacar(d, r) {
       <div class="duelo-cand ${cls} ${r.lider && r.lider.n === c.n ? 'lider' : ''}" style="--cor:${c.cor}">
         ${imgFoto(c)}
         <div class="info">
-          <div class="nome">${esc(c.nome)}</div>
+          <div class="nome">${esc(c.nome)}${seloEleito(c)}</div>
           <div class="partido">${esc(c.n)} · ${esc(c.partido)}</div>
           <div class="pct">${pct(c.pct, 2)}</div>
           <div class="votos">${fmt(c.votos)} votos</div>
@@ -944,7 +966,7 @@ function escopoProjecao() {
 }
 function htmlProjecao() {
   const e = escopoProjecao();
-  if (!e) return '';
+  if (!e || !aoVivo()) return ''; // com a apuração encerrada, vale o resultado
   const topo = '<div class="proj-topo"><b>PROJEÇÃO</b> <span class="proj-exp">experimental</span><button class="proj-ajuda" onclick="mostrarMetodo()">como calculamos</button></div>';
   if (!e.p) return `<div class="projecao">${topo}<div class="proj-indef">${esc(projecao.motivo || 'sem dados suficientes para este local')}</div></div>`;
   const [a, b] = cands.map(c => ({ ...c, pct: e.p.pct[c.n], faixa: e.p.faixa[c.n] })).sort((x, y) => y.pct - x.pct); // quem está na frente à esquerda

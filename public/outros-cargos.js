@@ -113,12 +113,13 @@ function resumoSup(s) {
     .sort((a, b) => b.votos - a.votos || a.n - b.n);
   return { lista, validos, pctSec: s.total.secTot ? 100 * s.total.secRec / s.total.secTot : 0 };
 }
+const quandoSup = s => s.hoje ? 'ao vivo' : `resultado de ${(s.data || '').split('-').reverse().slice(0, 2).join('/')}`;
 const nomeSup = s => (s.mun && MUNICIPIOS[s.mun]?.[1]) || s.nome.replace(/^Eleição Suplementar - /, '');
 
 // card completo de uma suplementar (município selecionado)
 function cardSuplementar(s) {
   const r = resumoSup(s);
-  return `<div class="oc-card oc-sup"><div class="oc-topo"><b>${esc(s.cargoNome)} <small>eleição suplementar · ao vivo</small></b></div>
+  return `<div class="oc-card oc-sup"><div class="oc-topo"><b>${esc(s.cargoNome)} <small>eleição suplementar · ${quandoSup(s)}</small></b></div>
     ${r.lista.map(candidatoComFoto).join('')}
     <div class="oc-sub">${fmt(s.total.secRec)}/${fmt(s.total.secTot)} seções (${pct(r.pctSec)}) · ${fmt(s.total.comp)} votantes${difCurta(r.lista)}</div></div>`;
 }
@@ -132,7 +133,7 @@ function cardListaSuplementares(lista, titulo) {
       const l = r.lista[0];
       const alvo = s.mun ? `selecionar({tipo:'municipio',id:'${s.mun}'})` : `selecionar({tipo:'uf',id:'${s.uf}'})`;
       return `<button class="oc-sup-linha" onclick="${alvo}">
-        <span class="oc-nome">${seloUF(s.uf)}${esc(nomeSup(s))} <small>${esc(s.cargoNome)}</small></span>
+        <span class="oc-nome">${seloUF(s.uf)}${esc(nomeSup(s))} <small>${esc(s.cargoNome)}${s.hoje ? '' : ' · ' + quandoSup(s).replace('resultado de ', '')}</small></span>
         <span class="oc-sup-lider">${r.validos ? `<span style="color:${l.cor}">${esc(l.nome)} ${pct(l.pct, 0)}</span>` : '<small>aguardando</small>'} <small>${pct(r.pctSec, 0)} apur.</small></span>
       </button>`;
     }).join('')}</div>`;
@@ -143,7 +144,8 @@ function htmlOutrosCargos() {
   if (!uf) {
     if (!['total', 'brasil', 'regiao'].includes(sel.tipo) && sel.tipo !== 'govs') return '';
     const sups = sel.tipo === 'regiao' ? suplementares.filter(s => REGIAO_DA_UF[s.uf] === sel.id) : suplementares;
-    const lista = cardListaSuplementares(sups, `Eleições suplementares hoje <small>${sups.length} ${sups.length === 1 ? 'município' : 'municípios'}</small>`);
+    const algumaHoje = sups.some(x => x.hoje);
+    const lista = cardListaSuplementares(sups, `Eleições suplementares ${algumaHoje ? 'hoje' : 'recentes'} <small>${sups.length} ${sups.length === 1 ? 'município' : 'municípios'}</small>`);
     return (lista ? `<div class="outros-cargos">${lista}</div>` : '') +
       '<div class="oc-dica">Clique num estado para ver aqui os candidatos a governador, senador e deputado.</div>';
   }
@@ -152,7 +154,7 @@ function htmlOutrosCargos() {
   // prefeito (ou outro cargo) em eleição suplementar hoje: no município, o card completo; no estado, a lista
   const supsUF = suplementares.filter(s => s.uf === uf);
   if (sel.tipo === 'municipio') supsUF.filter(s => s.mun === sel.id).forEach(s => blocos.push(cardSuplementar(s)));
-  else blocos.push(cardListaSuplementares(supsUF, 'Prefeitos em disputa hoje <small>eleições suplementares</small>'));
+  else blocos.push(cardListaSuplementares(supsUF, `Eleições suplementares <small>${supsUF.some(x => x.hoje) ? 'hoje' : 'recentes'}</small>`));
   const noModoGov = typeof govAtivo === 'function' && govAtivo();
   if (noModoGov) blocos.push(cardPresidente(uf));
   else if (cfg.turno === '2' && typeof govTemUF === 'function' && govTemUF(uf)) blocos.push(cardGov2T(uf));

@@ -23,13 +23,17 @@ const PROPORCIONAL = new Set([6, 7, 8, 13]);
 
 // eleições ordinárias (as mais recentes primeiro); municipais só nas capitais
 const ORDINARIAS = [
+  { id: '2026-2t-federal', ciclo: 'ele2026', ele: 6258, nome: 'Eleição Geral 2026 · 2º turno · Federal', data: '2026-10-25', turno: 2, cargos: [1], locais: 'br+ufs+zz' },
+  { id: '2026-2t-estadual', ciclo: 'ele2026', ele: 6260, nome: 'Eleição Geral 2026 · 2º turno · Estadual', data: '2026-10-25', turno: 2, cargos: [3], locais: 'ufs' },
   { id: '2026-1t-federal', ciclo: 'ele2026', ele: 6257, nome: 'Eleição Geral 2026 · 1º turno · Federal', data: '2026-10-04', turno: 1, cargos: [1], locais: 'br+ufs+zz' },
   { id: '2026-1t-estadual', ciclo: 'ele2026', ele: 6259, nome: 'Eleição Geral 2026 · 1º turno · Estadual', data: '2026-10-04', turno: 1, cargos: [3, 5, 6, 7, 8], locais: 'ufs' },
   { id: '2024-2t-municipal', ciclo: 'ele2024', ele: 620, nome: 'Eleições Municipais 2024 · 2º turno (capitais)', data: '2024-10-27', turno: 2, cargos: [11], locais: 'capitais' },
   { id: '2024-1t-municipal', ciclo: 'ele2024', ele: 619, nome: 'Eleições Municipais 2024 · 1º turno (capitais)', data: '2024-10-06', turno: 1, cargos: [11, 13], locais: 'capitais' },
 ];
-// 2022 e 2020 não são mais publicados em resultados.tse.jus.br (só os ciclos 2024 e 2026);
-// esses anos ficam no Portal de Dados Abertos do TSE, em CSV.
+// Anos que resultados.tse.jus.br não publica mais (2022 para trás) vêm do Portal de Dados Abertos do TSE, já
+// resumidos em server/historico-base (gerados por tools/importar-dados-abertos.js) e embutidos na imagem.
+// Os documentos de lá também servem de ponto de partida: o histórico aparece assim que o servidor sobe.
+const BASE_DIR = path.join(__dirname, 'historico-base');
 
 const pad = (v, n) => String(v).padStart(n, '0');
 const espera = ms => new Promise(r => setTimeout(r, ms));
@@ -62,7 +66,7 @@ function normalizarU(j) {
   const cands = [], partidos = {};
   for (const a of j.carg?.[0]?.agr || []) for (const p of a.par || []) for (const c of p.cand || []) {
     const v = num(c.vap);
-    cands.push({ n: c.n, nome: c.nmu, partido: p.sg, votos: v, eleito: eleitoPor(c.st), st: c.st || '' });
+    cands.push({ n: c.n, nome: c.nmu, partido: p.sg, sq: c.sqcand, votos: v, eleito: eleitoPor(c.st), st: c.st || '' });
     partidos[p.sg] = (partidos[p.sg] || 0) + v;
   }
   return { cands, partidos, s: j.s || {}, e: j.e || {}, v: j.v || {} };
@@ -118,6 +122,7 @@ function locaisDe(el) {
 async function baixarEleicao(el) {
   const arq = path.join(DIR, `${el.id}.json`);
   try { if (JSON.parse(fs.readFileSync(arq, 'utf8')).completo) return 'cache'; } catch { /* baixa */ }
+  try { if (JSON.parse(fs.readFileSync(path.join(BASE_DIR, `${el.id}.json`), 'utf8')).completo) return 'base'; } catch { /* baixa */ }
   const locais = locaisDe(el);
   const cargos = [];
   let falhas = 0;
@@ -134,7 +139,9 @@ async function baixarEleicao(el) {
     if (resultados.length) cargos.push({ cd, nome: CARGOS[cd] || `Cargo ${cd}`, proporcional: PROPORCIONAL.has(cd), locais: resultados });
   }
   if (!cargos.length) return falhas ? 'falha' : 'indisponivel';
-  const doc = { ...el, municipios: undefined, completo: falhas === 0, baixado: new Date().toISOString(), cargos };
+  // só fica "completo" (e deixa de ser baixado de novo) com a apuração encerrada em todos os locais
+  const encerrada = cargos.every(c => c.locais.every(l => l.secTot > 0 && l.secRec >= l.secTot));
+  const doc = { ...el, municipios: undefined, completo: falhas === 0 && encerrada, baixado: new Date().toISOString(), cargos };
   fs.mkdirSync(DIR, { recursive: true });
   fs.writeFileSync(arq + '.tmp', JSON.stringify(doc));
   fs.renameSync(arq + '.tmp', arq);
@@ -163,38 +170,62 @@ async function suplementares() {
   return out.sort((a, b) => b.data.localeCompare(a.data) || b.ele - a.ele);
 }
 
+// grupo de uma eleição no histórico: Eleições Gerais <ano>, Eleições Municipais <ano> ou suplementares
+function grupoDe(doc) {
+  if (doc.suplementar) return { grupo: 'suplementares', grupoNome: 'Eleições suplementares', ano: +doc.data.slice(0, 4), tipo: 'suplementar' };
+  const m = /^(\d{4})-(\d)t-(federal|estadual|municipal)$/.exec(doc.id);
+  if (!m) return { grupo: doc.id, grupoNome: doc.nome, ano: +doc.data.slice(0, 4), tipo: 'outra' };
+  const municipal = m[3] === 'municipal';
+  return { grupo: `${municipal ? 'municipal' : 'geral'}-${m[1]}`, grupoNome: `Eleições ${municipal ? 'Municipais' : 'Gerais'} ${m[1]}`, ano: +m[1], tipo: municipal ? 'municipal' : 'geral', abrangencia: m[3] };
+}
+
+// índice com tudo o que existe: a base embutida e o que foi baixado (o baixado vence quando os dois existem)
+function montarIndice() {
+  const docs = new Map();
+  for (const dir of [BASE_DIR, DIR]) {
+    let nomes = [];
+    try { nomes = fs.readdirSync(dir).filter(n => n.endsWith('.json') && n !== 'indice.json'); } catch { continue; }
+    for (const n of nomes) {
+      try { const d = JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')); docs.set(d.id, d); } catch { /* ignora */ }
+    }
+  }
+  let sup = 0;
+  const lista = [...docs.values()].sort((a, b) => b.data.localeCompare(a.data) || b.id.localeCompare(a.id))
+    .filter(d => !d.suplementar || ++sup <= TOTAL)
+    .map(d => ({
+      id: d.id, nome: d.nome, data: d.data, turno: d.turno, suplementar: !!d.suplementar, completo: d.completo,
+      fonte: d.fonte || 'Sistema de resultados do TSE', cargos: d.cargos.map(c => ({ cd: c.cd, nome: c.nome })), ...grupoDe(d),
+    }));
+  fs.mkdirSync(DIR, { recursive: true });
+  const arq = path.join(DIR, 'indice.json');
+  fs.writeFileSync(arq + '.tmp', JSON.stringify({ gerado: new Date().toISOString(), eleicoes: lista }));
+  fs.renameSync(arq + '.tmp', arq);
+  return lista;
+}
+
 async function sincronizarHistorico() {
   fs.mkdirSync(DIR, { recursive: true });
-  const indice = [];
-  const tentar = async el => {
+  for (const el of ORDINARIAS) {
     const st = await baixarEleicao(el);
-    if (st === 'indisponivel') { log(`${el.nome}: não disponível no TSE`); return false; }
-    if (st !== 'cache') log(`${el.nome}: ${st}`);
-    try {
-      const doc = JSON.parse(fs.readFileSync(path.join(DIR, `${el.id}.json`), 'utf8'));
-      indice.push({ id: el.id, nome: doc.nome, data: doc.data, turno: doc.turno, suplementar: !!doc.suplementar, completo: doc.completo, cargos: doc.cargos.map(c => ({ cd: c.cd, nome: c.nome })) });
-      return true;
-    } catch { return false; }
-  };
-  for (const el of ORDINARIAS) await tentar(el);
+    if (st === 'indisponivel') log(`${el.nome}: não disponível no TSE`);
+    else if (st !== 'cache' && st !== 'base') log(`${el.nome}: ${st}`);
+  }
   let sup = [];
   try { sup = await suplementares(); } catch (e) { log('aviso suplementares:', e.message); }
-  for (const el of sup) {
-    if (indice.length >= TOTAL) break;
+  for (const el of sup.slice(0, TOTAL)) {
     if (el.locais === 'ufs-uma') { el.locais = 'ufs'; el.soUF = el.uf; }
-    await tentar(el);
+    const st = await baixarEleicao(el);
+    if (st !== 'cache' && st !== 'base' && st !== 'indisponivel') log(`${el.nome}: ${st}`);
   }
-  indice.sort((a, b) => b.data.localeCompare(a.data));
-  const arq = path.join(DIR, 'indice.json');
-  fs.mkdirSync(DIR, { recursive: true });
-  fs.writeFileSync(arq + '.tmp', JSON.stringify({ gerado: new Date().toISOString(), eleicoes: indice.slice(0, TOTAL) }));
-  fs.renameSync(arq + '.tmp', arq);
-  log(`índice com ${Math.min(TOTAL, indice.length)} eleições`);
+  const lista = montarIndice();
+  log(`índice com ${lista.length} eleições (${lista.filter(e => !e.suplementar).length} ordinárias, ${lista.filter(e => e.suplementar).length} suplementares)`);
 }
 
 function iniciarHistorico() {
+  // o índice sai na hora com a base embutida e o que já foi baixado; os downloads vêm depois
+  try { const l = montarIndice(); log(`índice inicial com ${l.length} eleições`); } catch (e) { log('erro no índice inicial:', e.message); }
   const rodar = () => sincronizarHistorico().catch(e => log('erro:', e.message));
-  setTimeout(rodar, 5 * 60 * 1000); // começa depois que a apuração ao vivo já fez as primeiras passadas
+  setTimeout(rodar, 60 * 1000); // começa depois que a apuração ao vivo já fez a primeira passada
   setInterval(rodar, 6 * 60 * 60 * 1000); // completa o que faltou a cada 6 h
 }
 

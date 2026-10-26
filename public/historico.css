@@ -60,3 +60,13 @@
 @media (min-width: 2200px) {
   #hist #topo, #listaEleicoes, #cabecalhoEleicao, #cargos, #filtrosHist, #resultadoHist { zoom: 1.4; }
 }
+
+/* lista agrupada por eleição */
+.el-secao { margin: 12px 6px 4px; font-size: 12px; font-weight: 800; color: var(--suave); text-transform: uppercase; letter-spacing: .5px; }
+.el-item.el-sup { padding: 6px 10px; }
+.el-item.el-sup b { font-size: 13px; }
+.abas-turno:empty { display: none; }
+.abas-turno button { font-size: 13px; padding: 4px 12px; }
+
+.hist-acoes { display: flex; gap: 10px; align-items: center; }
+.link-codigo { color: var(--suave); font-size: 13px; }

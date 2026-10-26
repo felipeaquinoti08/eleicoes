@@ -2,6 +2,9 @@
 
 Painel ao vivo da apuração das Eleições 2026 com dados públicos do TSE: Brasil (estado e município) e exterior (continente, país, cidade e seção) num mesmo mapa clicável, com projeção do resultado final, filtros e sinal sonoro quando chegam dados novos. Funciona no navegador, no celular e na TV, e tem um modo para transmissão ao vivo.
 
+> **Repositório público.** Este código é aberto e qualquer pessoa pode ler, copiar e rodar o painel: https://github.com/felipeaquinoti08/eleicoes
+> Os dados exibidos são públicos (TSE e IBGE). O repositório não guarda credenciais: configurações do seu servidor ficam no arquivo `.env` e os dados coletados no volume `dados`, e **nenhum dos dois vai para o git** (estão no `.gitignore`). Não faça commit de senhas, tokens, certificados ou do `.env`.
+
 ## O que tem
 
 - **Mapa único, Brasil + exterior.** Clique num estado para ver os municípios dele, num país para ver as cidades, numa cidade do exterior para ver seção por seção. O placar, as estatísticas e o ranking mostram sempre a seleção atual. Municípios em cinza ainda não têm votos publicados pelo TSE.
@@ -42,19 +45,34 @@ No 2º turno, o placar mostra uma **projeção do resultado final** para o Total
 - **Limitação**: não foi validada com apurações anteriores, porque 2014 a 2022 não estão mais no sistema do TSE. Num teste simulado com apuração fora de ordem, o erro foi de cerca de 1 ponto com 10% apurado e quase zero a partir de 20%, mas simulações tendem a ser otimistas.
 - O cálculo roda no servidor (`server/projecao.js`) a cada passada da coleta e é publicado em `dados/projecao-2.json`. Precisa da base municipal do 1º turno, que o job baixa na primeira hora depois de subir o container. Desligue em ⚙ → *Projeção*.
 
-## Histórico (últimas 20 eleições)
+## Histórico: as últimas 10 eleições
 
-A página **📜 Histórico** (`/historico.html`) mostra as últimas 20 eleições com resultado publicado no sistema do TSE, de qualquer cargo:
+A página **📜 Histórico** (`/historico.html`) é organizada **por eleição**. Cada item da lista é uma eleição inteira, com abas de turno e de cargo:
 
-- Eleição Geral 2026, 1º turno: Presidente (Brasil, estados e exterior) e Governador, Senador, Deputado Federal, Estadual e Distrital por estado.
-- Eleições Municipais 2024, 1º e 2º turno: Prefeito e Vereador nas capitais.
-- As eleições suplementares mais recentes (prefeitos, vereadores e o governo de Roraima), lidas da configuração do próprio TSE, então a lista se atualiza sozinha.
+| Eleição | Cargos | Fonte |
+|---|---|---|
+| Eleições Gerais 2026, 2022, 2018, 2014, 2010 | Presidente (Brasil, estados e exterior), Governador, Senador, Deputado Federal, Estadual e Distrital (por estado) | 2026: sistema de resultados do TSE · demais: Portal de Dados Abertos do TSE |
+| Eleições Municipais 2024, 2020, 2016, 2012, 2008 | Prefeito e Vereador nas capitais | 2024: sistema de resultados do TSE · demais: Portal de Dados Abertos do TSE |
+| Eleições suplementares | As 20 mais recentes (prefeitos, vereadores, governador), num grupo à parte | sistema de resultados do TSE |
 
-Para cada eleição: mapa do Brasil colorido pelo partido mais votado, filtro por cargo e por local, candidatos com a situação (eleito, 2º turno) e, nos cargos proporcionais, os 40 mais votados e todos os eleitos, além dos votos nominais por partido.
+Em cada uma: mapa do Brasil pelo partido mais votado, filtro por local, candidatos com a situação (eleito, 2º turno) e, nos cargos proporcionais, os 40 mais votados, todos os eleitos e os votos nominais por partido.
 
-O job `server/historico.js` baixa tudo uma vez (cerca de 1 minuto), guarda em `dados/historico/` e confere de novo a cada 6 horas.
+**Já vem pronto na imagem.** As eleições estão resumidas em `server/historico-base/` (cerca de 3 MB), que vai junto no repositório e no Docker: o histórico aparece assim que o container sobe, sem depender do TSE. O job `server/historico.js` só baixa o que ainda não está na base (eleições novas e suplementares) e guarda em `dados/historico/`.
 
-**Sobre 2022 e 2020**: o sistema de resultados do TSE (`resultados.tse.jus.br`) só publica hoje os ciclos 2024 e 2026; os arquivos de 2022 e 2020 respondem 404. Esses anos existem no [Portal de Dados Abertos do TSE](https://dadosabertos.tse.jus.br/), em CSVs grandes, e podem ser importados depois.
+**Atualizar a base com os Dados Abertos** (fora do container, quando sair um ano novo):
+```bash
+# baixe os zips de https://cdn.tse.jus.br/estatistica/sead/odsele/votacao_candidato_munzona/ e .../detalhe_votacao_munzona/
+node tools/importar-dados-abertos.js <pasta-com-os-zips> 2022 2020 2018
+```
+O sistema de resultados do TSE só publica os ciclos 2024 e 2026; por isso os anos anteriores vêm dos Dados Abertos. Os totais conferem com os resultados oficiais (ex.: 2022, Lula 50,90% no 2º turno; 2018, Bolsonaro 55,13%; 2014, Dilma 51,64%).
+
+## Ao vivo ou resultados
+
+O servidor decide sozinho, pela data da eleição na configuração do TSE e pelo andamento da apuração:
+- **Ao vivo**: no dia da votação e, depois dele (até 3 dias), enquanto a apuração não chega a 100%. O selo mostra **AO VIVO**, e há projeção, aviso de novos dados com bipe e alerta quando o TSE para de publicar.
+- **Resultados**: fora disso. O selo vira **RESULTADO FINAL**, o vencedor ganha **✓ ELEITO** e saem a projeção e os avisos de apuração.
+
+Num deploy do zero (volume vazio), se a eleição do painel já está no histórico embutido, o servidor começa por ela: o resultado aparece na hora, mesmo que o TSE esteja limitando requisições, e a coleta completa por cima depois.
 
 ## Fontes de dados (TSE)
 
@@ -114,7 +132,8 @@ docker inspect --format "{{.State.Health.Status}}" apuracao-eleicoes   # healthy
 | `CONCORRENCIA` | `4` | Downloads simultâneos ao TSE. Se o `/saude` mostrar muitos 429, baixe para 2 |
 | `PORTA` | `8080` | Porta do servidor dentro do container |
 | `HISTORICO` | `1` | `0` desliga o download do histórico |
-| `HISTORICO_QTD` | `20` | Quantas eleições entram no histórico |
+| `HISTORICO_QTD` | `20` | Quantas eleições suplementares entram no histórico |
+| `SUPLEMENTARES_DIAS` | `7` | Até quantos dias depois as suplementares continuam no painel |
 
 No `.env`: `NPM_REDE` (rede do Nginx Proxy Manager, obrigatória) e `DADOS` (opcional, pasta absoluta para os dados no lugar do volume).
 
@@ -229,7 +248,9 @@ server/projecao.js  projeção do 2º turno a partir do 1º turno
 server/governador.js coleta do 2º turno para governador
 server/suplementares.js eleições suplementares do dia (prefeitos)
 public/outros-cargos.js  cards dos outros cargos ao selecionar um estado
-server/historico.js job do histórico (últimas 20 eleições)
+server/historico.js job do histórico (baixa o que falta da base)
+server/historico-base/ eleições resumidas, embutidas na imagem
+tools/importar-dados-abertos.js gera a base a partir dos Dados Abertos do TSE
 server/server.js   servidor HTTP (site + snapshots + /saude)
 iniciar.ps1        roda tudo localmente com Node portátil
 ```

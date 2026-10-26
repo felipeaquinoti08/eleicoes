@@ -6,7 +6,7 @@ const UF_NOMES = {
   ES: 'Espírito Santo', GO: 'Goiás', MA: 'Maranhão', MG: 'Minas Gerais', MS: 'Mato Grosso do Sul', MT: 'Mato Grosso',
   PA: 'Pará', PB: 'Paraíba', PE: 'Pernambuco', PI: 'Piauí', PR: 'Paraná', RJ: 'Rio de Janeiro', RN: 'Rio Grande do Norte',
   RO: 'Rondônia', RR: 'Roraima', RS: 'Rio Grande do Sul', SC: 'Santa Catarina', SE: 'Sergipe', SP: 'São Paulo', TO: 'Tocantins',
-  BR: 'Brasil', ZZ: 'Exterior',
+  BR: 'Brasil', ZZ: 'Exterior', VT: 'Voto em trânsito',
 };
 const CORES_PARTIDO = {
   PT: '#e5242f', PL: '#2563eb', 'UNIÃO': '#0ea5e9', PSD: '#16a34a', MDB: '#22c55e', PSDB: '#60a5fa', REPUBLICANOS: '#1e40af',
@@ -160,38 +160,113 @@ function escolherCargo(cd) {
   escolherLocal(br ? 'BR' : locais.length === 1 ? chaveLocal(locais[0]) : '');
 }
 
-async function escolherEleicao(id, cargoInicial, localInicial) {
-  document.querySelectorAll('.el-item').forEach(b => b.classList.toggle('ativa', b.dataset.id === id));
-  $('resultadoHist').innerHTML = '<p class="vazio-hist">Carregando…</p>';
-  eleicao = await (await fetch(`dados/historico/${id}.json`)).json();
-  $('cabecalhoEleicao').innerHTML = `<h2>${esc(eleicao.nome)}</h2><small>${dataBR(eleicao.data)} · ${eleicao.turno}º turno` +
-    (eleicao.completo ? '' : ' · <b>dados parciais, completando no próximo ciclo</b>') + '</small>';
+// ---------------------------------------------------------------- eleições agrupadas
+// Cada eleição (ex.: Eleições Gerais 2022) junta os documentos federal e estadual de cada turno; as
+// suplementares ficam num grupo à parte, uma por item.
+let grupos = [], grupoSel = null, turnoSel = null, idSupSel = null;
+
+function montarGrupos() {
+  const mapa = new Map();
+  for (const e of indice) {
+    if (e.suplementar) continue;
+    const chave = e.grupo || e.id;
+    if (!mapa.has(chave)) mapa.set(chave, { grupo: chave, nome: e.grupoNome || e.nome, ano: e.ano || +e.data.slice(0, 4), tipo: e.tipo, docs: [] });
+    mapa.get(chave).docs.push(e);
+  }
+  return [...mapa.values()].sort((a, b) => b.ano - a.ano);
+}
+
+function renderLista() {
+  const supl = indice.filter(e => e.suplementar);
+  const linhaGrupo = g => {
+    const turnos = [...new Set(g.docs.map(d => d.turno))].sort();
+    const cargos = [...new Map(g.docs.flatMap(d => d.cargos).map(c => [c.cd, c.nome])).entries()].sort((a, b) => a[0] - b[0]).map(c => c[1]);
+    const fonte = g.docs.some(d => /Dados Abertos/.test(d.fonte || '')) ? 'dados abertos' : '';
+    return `<button class="el-item" data-grupo="${esc(g.grupo)}">
+      <span class="tipo ord">${g.tipo === 'municipal' ? 'municipal' : 'geral'}</span>
+      <b>${esc(g.nome)}</b><small>${turnos.map(t => t + 'º').join(' e ')} turno · ${cargos.map(esc).join(', ')}${fonte ? ' · ' + fonte : ''}</small>
+    </button>`;
+  };
+  $('listaEleicoes').innerHTML = grupos.map(linhaGrupo).join('') +
+    (supl.length ? `<div class="el-secao">Eleições suplementares</div>` + supl.map(e => `
+      <button class="el-item el-sup" data-id="${esc(e.id)}">
+        <b>${esc(e.nome.replace(/^Eleição Suplementar - /, ''))}</b><small>${dataBR(e.data)} · ${e.cargos.map(c => esc(c.nome)).join(', ')}</small>
+      </button>`).join('') : '');
+  document.querySelectorAll('.el-item[data-grupo]').forEach(b => b.onclick = () => escolherGrupo(b.dataset.grupo));
+  document.querySelectorAll('.el-item[data-id]').forEach(b => b.onclick = () => escolherSuplementar(b.dataset.id));
+}
+
+async function carregarDocs(ids) {
+  const docs = await Promise.all(ids.map(async id => (await fetch(`dados/historico/${id}.json`)).json()));
+  return docs;
+}
+
+function mostrarEleicao(titulo, subtitulo, docs, cargoInicial, localInicial) {
+  eleicao = { cargos: docs.flatMap(d => d.cargos).sort((a, b) => a.cd - b.cd), completo: docs.every(d => d.completo) };
+  $('cabecalhoEleicao').innerHTML = `<h2>${esc(titulo)}</h2><small>${subtitulo}` + (eleicao.completo ? '' : ' · <b>apuração ainda não encerrada</b>') + '</small>';
   $('cargos').innerHTML = eleicao.cargos.map(c => `<button data-cd="${c.cd}">${esc(c.nome)}</button>`).join('');
-  $('cargos').querySelectorAll('button').forEach(b => b.onclick = () => escolherCargo(+b.dataset.cd));
-  const cargo = eleicao.cargos.find(c => c.cd === cargoInicial) || eleicao.cargos[0];
-  escolherCargo(cargo.cd);
-  if (localInicial && cargo.locais.some(l => chaveLocal(l) === localInicial)) escolherLocal(localInicial);
-  history.replaceState(null, '', '#' + id);
+  $('cargos').querySelectorAll('button').forEach(b => b.onclick = () => { escolherCargo(+b.dataset.cd); atualizarEndereco(); });
+  const c = eleicao.cargos.find(x => x.cd === cargoInicial) || eleicao.cargos[0];
+  escolherCargo(c.cd);
+  if (localInicial && c.locais.some(l => chaveLocal(l) === localInicial)) escolherLocal(localInicial);
+}
+
+async function escolherGrupo(chave, turno, cargoInicial, localInicial) {
+  const g = grupos.find(x => x.grupo === chave);
+  if (!g) return;
+  grupoSel = g; idSupSel = null;
+  const turnos = [...new Set(g.docs.map(d => d.turno))].sort();
+  turnoSel = turnos.includes(turno) ? turno : turnos[0];
+  document.querySelectorAll('.el-item').forEach(b => b.classList.toggle('ativa', b.dataset.grupo === chave));
+  $('turnos').innerHTML = turnos.length > 1 ? turnos.map(t => `<button data-t="${t}" class="${t === turnoSel ? 'ativa' : ''}">${t}º turno</button>`).join('') : '';
+  $('turnos').querySelectorAll('button').forEach(b => b.onclick = () => escolherGrupo(chave, +b.dataset.t, cargo?.cd));
+  $('resultadoHist').innerHTML = '<p class="vazio-hist">Carregando…</p>';
+  const docsT = g.docs.filter(d => d.turno === turnoSel);
+  const docs = await carregarDocs(docsT.map(d => d.id));
+  const data = docsT[0].data;
+  const fonte = docsT[0].fonte || '';
+  mostrarEleicao(g.nome, `${turnoSel}º turno · ${dataBR(data)}${fonte ? ' · fonte: ' + esc(fonte) : ''}`, docs, cargoInicial, localInicial);
+  atualizarEndereco();
+}
+
+async function escolherSuplementar(id, cargoInicial, localInicial) {
+  const e = indice.find(x => x.id === id);
+  if (!e) return;
+  grupoSel = null; idSupSel = id; turnoSel = e.turno;
+  document.querySelectorAll('.el-item').forEach(b => b.classList.toggle('ativa', b.dataset.id === id));
+  $('turnos').innerHTML = '';
+  $('resultadoHist').innerHTML = '<p class="vazio-hist">Carregando…</p>';
+  const docs = await carregarDocs([id]);
+  mostrarEleicao(e.nome, `${dataBR(e.data)} · eleição suplementar`, docs, cargoInicial, localInicial);
+  atualizarEndereco();
+}
+
+// endereço: #<grupo>/<turno>/<cargo>/<local> ou #sup/<id>/<cargo>/<local>
+function atualizarEndereco() {
+  const partes = idSupSel ? ['sup', idSupSel] : grupoSel ? [grupoSel.grupo, turnoSel] : [];
+  if (cargo) partes.push(cargo.cd);
+  if (localSel) partes.push(localSel);
+  history.replaceState(null, '', '#' + partes.join('/'));
 }
 
 async function iniciar() {
   const r = await fetch('dados/historico/indice.json', { cache: 'no-cache' });
   if (!r.ok) {
-    $('listaEleicoes').innerHTML = '<p class="vazio-hist">O histórico ainda está sendo baixado pelo servidor. Tente de novo em alguns minutos.</p>';
+    $('listaEleicoes').innerHTML = '<p class="vazio-hist">O histórico ainda está sendo preparado pelo servidor. Tente de novo em alguns minutos.</p>';
     return;
   }
   indice = (await r.json()).eleicoes;
-  $('listaEleicoes').innerHTML = indice.map(e => `
-    <button class="el-item" data-id="${esc(e.id)}">
-      <span class="tipo ${e.suplementar ? '' : 'ord'}">${e.suplementar ? 'suplementar' : 'ordinária'}</span>
-      <b>${esc(e.nome)}</b><small>${dataBR(e.data)} · ${e.cargos.map(c => esc(c.nome)).join(', ')}</small>
-    </button>`).join('');
-  document.querySelectorAll('.el-item').forEach(b => b.onclick = () => escolherEleicao(b.dataset.id));
-  $('hLocal').onchange = () => escolherLocal($('hLocal').value);
+  grupos = montarGrupos();
+  renderLista();
+  $('hLocal').onchange = () => { escolherLocal($('hLocal').value); atualizarEndereco(); };
   $('hModo').onchange = () => { modo = $('hModo').value; renderResultado(); };
-  // endereço #<eleição>[/<cargo>/<local>], usado pelos links "ver todos" do painel ao vivo
-  const [inicial, cargo, local] = decodeURIComponent(location.hash.slice(1)).split('/');
-  if (indice.some(e => e.id === inicial)) escolherEleicao(inicial, +cargo || null, local || null);
-  else escolherEleicao(indice[0].id);
+  const p = decodeURIComponent(location.hash.slice(1)).split('/');
+  if (p[0] === 'sup' && p[1]) return escolherSuplementar(p[1], +p[2] || null, p[3] || null);
+  if (grupos.some(g => g.grupo === p[0])) return escolherGrupo(p[0], +p[1] || null, +p[2] || null, p[3] || null);
+  // formato antigo: #<id do documento>/<cargo>/<local> (links do painel ao vivo)
+  const doc = indice.find(e => e.id === p[0]);
+  if (doc && doc.suplementar) return escolherSuplementar(doc.id, +p[1] || null, p[2] || null);
+  if (doc) return escolherGrupo(doc.grupo, doc.turno, +p[1] || null, p[2] || null);
+  if (grupos.length) escolherGrupo(grupos[0].grupo);
 }
 iniciar();
