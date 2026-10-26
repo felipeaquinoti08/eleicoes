@@ -4,6 +4,7 @@
 # o segredo do service principal aparece UMA vez no final, para você copiar para o .env do servidor.
 #
 #   CONTA=eleicoesdados123 RG=rg-eleicoes LOCAL=brazilsouth bash azure/configurar.sh
+# Pode rodar de novo: reaplica as configurações sem perder dados e mantém o segredo atual (RESETAR_SEGREDO=1 troca).
 #
 set -euo pipefail
 : "${CONTA:?defina CONTA (nome da storage account: 3 a 24 letras minúsculas e números, único no Azure)}"
@@ -44,14 +45,24 @@ if ! az role definition list --name "Eleicoes Gravador Blob" --query "[0].id" -o
 fi
 
 echo "== service principal do servidor"
-SP_JSON="$(az ad sp create-for-rbac --name "apuracao-eleicoes-gravador" --years 1 -o json)"
-APP_ID="$(echo "$SP_JSON" | sed -n 's/.*"appId": *"\([^"]*\)".*/\1/p')"
-TENANT="$(echo "$SP_JSON" | sed -n 's/.*"tenant": *"\([^"]*\)".*/\1/p')"
-SEGREDO="$(echo "$SP_JSON" | sed -n 's/.*"password": *"\([^"]*\)".*/\1/p')"
-sleep 20 # propagação do service principal no Entra ID
+# Rodar de novo é seguro: se o service principal já existe, ele é reaproveitado e o segredo atual (o que está no
+# .env do servidor) continua valendo. Para gerar um segredo novo (e invalidar o anterior): RESETAR_SEGREDO=1
+TENANT="$(az account show --query tenantId -o tsv)"
+APP_ID="$(az ad sp list --display-name "apuracao-eleicoes-gravador" --query "[0].appId" -o tsv)"
+SEGREDO=""
+if [ -z "$APP_ID" ]; then
+  SP_JSON="$(az ad sp create-for-rbac --name "apuracao-eleicoes-gravador" --years 1 -o json)"
+  APP_ID="$(echo "$SP_JSON" | sed -n 's/.*"appId": *"\([^"]*\)".*/\1/p')"
+  SEGREDO="$(echo "$SP_JSON" | sed -n 's/.*"password": *"\([^"]*\)".*/\1/p')"
+  sleep 20 # propagação do service principal no Entra ID
+elif [ "${RESETAR_SEGREDO:-0}" = "1" ]; then
+  SEGREDO="$(az ad app credential reset --id "$APP_ID" --years 1 --query password -o tsv)"
+fi
 for c in "$PUBLICO" "$INTERNO"; do
-  az role assignment create --assignee "$APP_ID" --role "Eleicoes Gravador Blob" \
-    --scope "$CONTA_ID/blobServices/default/containers/$c" -o none
+  ESCOPO="$CONTA_ID/blobServices/default/containers/$c"
+  if [ -z "$(az role assignment list --assignee "$APP_ID" --role "Eleicoes Gravador Blob" --scope "$ESCOPO" --query "[0].id" -o tsv)" ]; then
+    az role assignment create --assignee "$APP_ID" --role "Eleicoes Gravador Blob" --scope "$ESCOPO" -o none
+  fi
 done
 
 echo "== SAS só de leitura do container $PUBLICO, para o Cloudflare"
@@ -59,6 +70,13 @@ echo "== SAS só de leitura do container $PUBLICO, para o Cloudflare"
 az storage container policy create --account-name "$CONTA" -c "$PUBLICO" --name leitura-cdn \
   --permissions r --expiry "${VALIDADE_SAS}T00:00:00Z" --auth-mode key -o none 2>/dev/null || true
 SAS="$(az storage container generate-sas --account-name "$CONTA" -n "$PUBLICO" --policy-name leitura-cdn --https-only --auth-mode key -o tsv)"
+
+if [ -n "$SEGREDO" ]; then
+  LINHA_SEGREDO="AZURE_CLIENT_SECRET=$SEGREDO
+AZURE_CLIENT_SECRET_EXPIRA=$(date -u -d '+1 year' +%Y-%m-%d 2>/dev/null || date -u -v+1y +%Y-%m-%d)"
+else
+  LINHA_SEGREDO="# AZURE_CLIENT_SECRET e AZURE_CLIENT_SECRET_EXPIRA: mantenha os que já estão no .env (segredo não foi trocado)"
+fi
 
 cat <<FIM
 
@@ -69,8 +87,7 @@ AZURE_CONTAINER_PUBLICO=$PUBLICO
 AZURE_CONTAINER_INTERNO=$INTERNO
 AZURE_TENANT_ID=$TENANT
 AZURE_CLIENT_ID=$APP_ID
-AZURE_CLIENT_SECRET=$SEGREDO
-AZURE_CLIENT_SECRET_EXPIRA=$(date -u -d '+1 year' +%Y-%m-%d 2>/dev/null || date -u -v+1y +%Y-%m-%d)
+$LINHA_SEGREDO
 
 SAS de leitura para o Cloudflare (vai na regra de reescrita ou no secret do Worker, nunca no servidor):
 $SAS
