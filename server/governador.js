@@ -1,29 +1,19 @@
 'use strict';
-// 2º turno para Governador (eleição 6260 em 2026): só nos estados que tiveram 2º turno.
+// 2º turno para Governador: só nos estados que tiveram 2º turno. O código da eleição e os estados vêm da
+// configuração do TSE (server/eleicao-atual.js); em 2026, eleição 6260 em AC, AM, DF, ES, RN e TO.
 // Cada estado tem os próprios candidatos. Publica dados/gov-2.json com o total de cada UF e os municípios.
 
 const RAIZ = 'https://resultados.tse.jus.br/oficial';
-const ELE = 6260;
 const CARGO = 3;
-const UFS_PADRAO = ['AM', 'RN', 'DF', 'ES', 'AC', 'TO'];
 
-function criar({ getJSON, baixar, emParalelo, gravarJSON, log, armazenamento, CONCORRENCIA }) {
+function criar({ getJSON, baixar, emParalelo, gravarJSON, log, armazenamento, lerEstado, CONCORRENCIA, eleicao }) {
   const pad = (v, n) => String(v).padStart(n, '0');
-  const base = `${RAIZ}/ele2026/${ELE}/dados`;
+  const ELE = eleicao.estadual[2].ele;
+  const CICLO = eleicao.ciclo;
+  const base = `${RAIZ}/${CICLO}/${ELE}/dados`;
   const arqEstado = 'cache-gov-2.json';
-  const estado = armazenamento.lerJSON(arqEstado) || { ufs: {} };
-  let ufsGov = null;
-
-  async function descobrirUFs() {
-    if (ufsGov) return ufsGov;
-    try {
-      const cfg = await getJSON(`${RAIZ}/comum/config/ele-c.json`);
-      for (const p of cfg.pl || []) for (const e of p.e || []) {
-        if (+e.cd === ELE) ufsGov = e.abr.map(a => a.cd.toUpperCase());
-      }
-    } catch (er) { log('aviso governador: configuração do TSE indisponível, usando a lista padrão:', er.message); }
-    return (ufsGov ||= UFS_PADRAO);
-  }
+  const estado = lerEstado(arqEstado) || { ufs: {} };
+  const descobrirUFs = async () => eleicao.estadual[2].ufs;
 
   const candidatosDe = j => {
     const out = [];
@@ -46,7 +36,7 @@ function criar({ getJSON, baixar, emParalelo, gravarJSON, log, armazenamento, CO
       const arq = `fotos/${c.sq}.jpeg`;
       if (!/^\d+$/.test(c.sq) || armazenamento.existe(arq)) continue;
       for (const pasta of [uf.toLowerCase(), 'br']) {
-        try { armazenamento.gravar(arq, Buffer.from(await (await baixar(`${RAIZ}/ele2026/${ELE}/fotos/${pasta}/${c.sq}.jpeg`, 4)).arrayBuffer())); break; }
+        try { armazenamento.gravar(arq, Buffer.from(await (await baixar(`${RAIZ}/${CICLO}/${ELE}/fotos/${pasta}/${c.sq}.jpeg`, 4)).arrayBuffer())); break; }
         catch { /* tenta a outra pasta */ }
       }
     }

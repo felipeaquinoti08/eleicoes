@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const sync = require('./sync');
 const historico = require('./historico');
 const armazenamento = require('./armazenamento');
+const eleicao = require('./eleicao-atual');
 
 const PORTA = +process.env.PORTA || 8080;
 const DIR_PUBLIC = path.join(__dirname, '..', 'public');
@@ -70,7 +71,12 @@ const VERSAO = calcularVersao();
 function versionarHTML(html) {
   return html
     .replace(/(<(?:script|link)\b[^>]*\b(?:src|href)=")(?!https?:|\/\/)([^"?#]+\.(?:js|css))"/g, `$1$2?v=${VERSAO}"`)
-    .replace('<head>', `<head>\n  <script>window.VERSAO_APP = '${VERSAO}'; window.DADOS_BASE = ${JSON.stringify(DADOS_URL || 'dados/')};</script>`);
+    .replace('<head>', `<head>\n  <script>window.VERSAO_APP = '${versaoPublica()}'; window.DADOS_BASE = ${JSON.stringify(DADOS_URL || 'dados/')}; ` +
+      `window.ELEICAO = ${JSON.stringify(eleicao.obter()).replace(/</g, '\\u003c')};</script>`);
+}
+// versão vista pelas páginas abertas: muda com um deploy ou quando começa uma eleição nova (elas recarregam sozinhas)
+function versaoPublica() {
+  return `${VERSAO}-${eleicao.obter().id}`;
 }
 
 const INICIO = new Date().toISOString();
@@ -110,7 +116,9 @@ function resolver(urlPath) {
     return { arq: fs.existsSync(baixado) ? baixado : embutido, dados: false };
   }
   if (/^\/dados\/fotos\/\d+\.jpeg$/.test(p)) return { arq: path.join(DIR_DADOS, 'fotos', path.basename(p)), dados: false };
-  const rel = p === '/' ? 'index.html' : p.slice(1);
+  // numa eleição municipal, a página inicial é o painel municipal (prefeitos)
+  const inicial = eleicao.obter().tipo === 'municipal' && fs.existsSync(path.join(DIR_PUBLIC, 'municipal.html')) ? 'municipal.html' : 'index.html';
+  const rel = p === '/' ? inicial : p.slice(1);
   const arq = path.resolve(DIR_PUBLIC, rel);
   if (!arq.startsWith(DIR_PUBLIC + path.sep)) return null; // bloqueia path traversal
   return { arq, dados: false };
@@ -126,7 +134,7 @@ const servidor = http.createServer((req, res) => {
   // versão do site em execução: as páginas abertas comparam com a delas e recarregam após um deploy
   if (caminhoUrl === '/versao') {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-    return res.end(JSON.stringify({ versao: VERSAO }));
+    return res.end(JSON.stringify({ versao: versaoPublica() }));
   }
 
   // presença: cada aba aberta manda um sinal a cada 30 s; conta quem deu sinal recentemente
@@ -153,7 +161,7 @@ const servidor = http.createServer((req, res) => {
     const online = contarOnline();
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     return res.end(JSON.stringify({
-      ok: true, agora: new Date().toISOString(), versao: VERSAO, iniciadoEm: INICIO,
+      ok: true, agora: new Date().toISOString(), versao: VERSAO, iniciadoEm: INICIO, eleicao: eleicao.status(),
       visitantes: { online, picoHoje: picoOnline.valor, picoEm: picoOnline.em },
       snapshots, historico: hist, historicoStatus: historico.status(), coletas: sync.status(),
       armazenamento: { ...armazenamento.status(), dadosLidosEm: DADOS_URL || '/dados/ (este servidor)' },
@@ -220,7 +228,19 @@ servidor.listen(PORTA, async () => {
   console.log(`painel em http://0.0.0.0:${PORTA}/ (dados: ${armazenamento.MODO === 'azure' ? 'Azure Blob' : DIR_DADOS}${DADOS_URL ? `, lidos pelo navegador em ${DADOS_URL}` : ''})`);
   await armazenamento.iniciar();
   console.log(resumoDadosExistentes());
+  await eleicao.atualizar();
+  const e = eleicao.obter();
+  console.log(`eleição acompanhada: ${e.id} (${e.tipo}, ${e.origem}), turnos ${Object.entries(e.turnos).map(([t, v]) => `${t}º = ${v.ele} em ${v.data}`).join(', ')}`);
   if (process.env.SYNC !== '0') sync.iniciar();
   if (process.env.HISTORICO !== '0') historico.iniciarHistorico();
+  // A cada 6 h confere a configuração do TSE. Quando começa uma eleição nova, o processo reinicia (o Docker sobe de
+  // novo sozinho) para a coleta começar limpa com os códigos novos; as páginas abertas recarregam pela /versao.
+  setInterval(async () => {
+    const { mudou } = await eleicao.atualizar();
+    if (!mudou) return;
+    console.log(`nova eleição na configuração do TSE: ${eleicao.obter().id}. Reiniciando para acompanhá-la.`);
+    await armazenamento.aguardarEnvios(60000);
+    process.exit(0);
+  }, 6 * 60 * 60 * 1000).unref();
 });
 for (const s of ['SIGINT', 'SIGTERM']) process.on(s, () => servidor.close(() => process.exit(0)));

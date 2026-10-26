@@ -2,11 +2,20 @@
 
 // onde ficam os dados publicados pelo servidor: /dados/ ou uma CDN (window.DADOS_BASE é injetado pelo servidor no HTML)
 const DADOS = window.DADOS_BASE || 'dados/';
-const BASE = 'https://resultados.tse.jus.br/oficial/ele2026';
-const TURNOS = {
-  1: { ele: 6257, pleito: 3220, nome: '1º turno' },
-  2: { ele: 6258, pleito: 3221, nome: '2º turno' },
+// eleição acompanhada: descoberta pelo servidor na configuração do TSE (window.ELEICAO, injetado no HTML).
+// Sem servidor (arquivos abertos direto), fica a de 2026.
+const ELEICAO = window.ELEICAO?.tipo === 'geral' ? window.ELEICAO : {
+  ciclo: 'ele2026', ano: 2026, base: 'https://resultados.tse.jus.br/oficial/ele2026',
+  turnos: { 1: { ele: 6257, pleito: 3220, data: '2026-10-04' }, 2: { ele: 6258, pleito: 3221, data: '2026-10-25' } },
 };
+const BASE = ELEICAO.base;
+const TURNOS = Object.fromEntries(Object.entries(ELEICAO.turnos).map(([t, v]) => [t, { ...v, nome: `${t}º turno` }]));
+// opções do filtro de turno com a data de cada um (o mais recente primeiro)
+(() => {
+  const s = document.getElementById('fTurno');
+  if (s) s.innerHTML = Object.keys(TURNOS).sort().reverse()
+    .map(t => `<option value="${t}">${TURNOS[t].nome}${TURNOS[t].data ? ` (${TURNOS[t].data.slice(8, 10)}/${TURNOS[t].data.slice(5, 7)})` : ''}</option>`).join('');
+})();
 const CORES_FIXAS = {
   13: '#e5242f', 22: '#2563eb', 30: '#f97316', 55: '#16a34a', 14: '#a855f7', 70: '#06b6d4',
   27: '#eab308', 16: '#db2777', 21: '#b91c1c', 29: '#92400e', 35: '#65a30d', 80: '#f472b6',
@@ -58,6 +67,7 @@ if (modoTV) { cfg.modo = 'completo'; cfg.tour = true; }
 const ehLive = () => cfg.modo === 'live';
 
 // ---------------------------------------------------------------- estado
+if (!TURNOS[cfg.turno]) cfg.turno = Object.keys(TURNOS).sort().pop(); // turno salvo de outra eleição
 let T = TURNOS[cfg.turno];
 let cands = [];               // [{n, nome, partido, sq, cor}]
 let candSet = new Set();
@@ -153,6 +163,7 @@ async function carregarSnapshot() {
   const r = await fetch(`${DADOS}turno-${cfg.turno}.json`, { cache: 'no-cache' });
   if (!r.ok) return false;
   const snap = await r.json();
+  if (snap.ele && +snap.ele !== +T.ele) return false; // snapshot de outra eleição (a coleta da atual ainda não publicou)
   definirCandidatos(snap.candidatos);
   ofExterior = snap.ofExterior;
   situacao = snap.situacao || null;

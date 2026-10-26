@@ -178,7 +178,7 @@ async function ordinariasDaConfiguracao() {
 // Detalhamento municipal a partir do que o painel coletou ao vivo (presidente e governador do 2º turno), para
 // eleições que já terminaram e ainda não têm o detalhe embutido (os Dados Abertos demoram a publicar).
 async function exportarMunicipiosDoAoVivo() {
-  const ano = (process.env.CICLO_ATUAL || '2026');
+  const ano = require('./eleicao-atual').obter().ano; // eleição acompanhada ao vivo
   const tarefas = [
     { id: `${ano}-2t-federal`, cd: 1, ler: () => armazenamento.lerJSON('cache-mun-2.json') },
     { id: `${ano}-1t-federal`, cd: 1, ler: () => armazenamento.lerJSON('cache-mun-1.json') },

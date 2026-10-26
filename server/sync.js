@@ -6,12 +6,23 @@ const path = require('path');
 const BU = require('../public/bu.js');
 const projecao = require('./projecao');
 const armazenamento = require('./armazenamento');
+const eleicao = require('./eleicao-atual');
 
-const BASE = 'https://resultados.tse.jus.br/oficial/ele2026';
-const TURNOS = {
-  1: { ele: 6257, pleito: 3220 },
-  2: { ele: 6258, pleito: 3221 },
-};
+// Códigos da eleição atual (ciclo, eleição e pleito de cada turno), descobertos na configuração do TSE por
+// server/eleicao-atual.js e fixados quando a coleta começa. Uma eleição nova reinicia o processo.
+let ELEICAO = eleicao.PADRAO, BASE = ELEICAO.base, TURNOS = ELEICAO.turnos;
+let descartarEstado = false; // o estado gravado é de outra eleição
+function configurarEleicao() {
+  ELEICAO = eleicao.obter();
+  BASE = ELEICAO.base;
+  TURNOS = ELEICAO.tipo === 'geral' ? ELEICAO.turnos : {};
+  const marca = armazenamento.lerJSON('cache-eleicao.json');
+  descartarEstado = !!marca && marca.id !== ELEICAO.id;
+  if (descartarEstado) log(`estado gravado é da eleição ${marca.id}; a coleta de ${ELEICAO.id} começa do zero`);
+  armazenamento.gravarJSON('cache-eleicao.json', { id: ELEICAO.id, desde: new Date().toISOString() });
+}
+// estado da coleta gravado antes (null se for de outra eleição)
+const lerEstado = nome => (descartarEstado ? null : armazenamento.lerJSON(nome));
 const UFS = ["AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG","MS","MT","PA","PB","PE","PI","PR","RJ","RN","RO","RR","RS","SC","SE","SP","TO"];
 const CONCORRENCIA = +process.env.CONCORRENCIA || 4;
 
@@ -82,7 +93,7 @@ const gravarJSON = (nome, obj) => armazenamento.gravarJSON(nome, obj);
 const caches = {};
 function cacheDo(pleito) {
   if (!caches[pleito]) {
-    caches[pleito] = armazenamento.lerJSON(`cache-bu-${pleito}.json`) || {};
+    caches[pleito] = lerEstado(`cache-bu-${pleito}.json`) || {};
   }
   return caches[pleito];
 }
@@ -105,7 +116,9 @@ async function baixarFotos(n, T, candidatos) {
 const estados = {};
 function estadoDo(n) {
   if (!estados[n]) {
-    const ant = armazenamento.lerJSON(`turno-${n}.json`) || sementeDoHistorico(n) || {};
+    let ant = lerEstado(`turno-${n}.json`);
+    if (ant && ant.ele && +ant.ele !== +TURNOS[n].ele) ant = null; // snapshot de outra eleição
+    ant = ant || sementeDoHistorico(n) || {};
     estados[n] = { candidatos: ant.candidatos || [], ofExterior: ant.ofExterior || null, brasil: ant.brasil || null, ufs: ant.ufs || {}, cidades: ant.cidades || {}, situacao: ant.situacao || null, situacaoBR: ant.situacaoBR || {} };
     if (ant.semente) { log(`turno ${n}: sem dados gravados, começando pelo resultado do histórico embutido`); setImmediate(() => publicar(n)); }
   }
@@ -292,7 +305,7 @@ async function sincronizarExterior(n) {
 const estadoMun = {};
 function estadoMunDo(n) {
   if (!estadoMun[n]) {
-    estadoMun[n] = armazenamento.lerJSON(`cache-mun-${n}.json`) || {};
+    estadoMun[n] = lerEstado(`cache-mun-${n}.json`) || {};
   }
   return estadoMun[n];
 }
@@ -415,6 +428,14 @@ function agendar(n, minutos, fn, nome) {
 }
 
 function iniciar() {
+  configurarEleicao();
+  const brasilMin0 = (+process.env.SYNC_BRASIL_S || 30) / 60;
+  // eleições suplementares do dia (prefeitos etc.), lidas da configuração do TSE, em qualquer ano
+  if (process.env.SUPLEMENTARES !== '0') {
+    const sup = require('./suplementares').criar({ getJSON, baixar, gravarJSON, log, armazenamento });
+    agendar('2', brasilMin0, () => sup.sincronizar(), 'suplementares');
+  }
+  if (ELEICAO.tipo !== 'geral') return iniciarOutroTipo(brasilMin0);
   const min = +process.env.SYNC_INTERVALO_MIN || 5;
   const turnos = (process.env.TURNOS || '2,1').split(',').map(s => s.trim()).filter(t => TURNOS[t]);
   const brasilMin = (+process.env.SYNC_BRASIL_S || 30) / 60;
@@ -427,22 +448,26 @@ function iniciar() {
   // municípios: o 1º turno já acabou, então depois da primeira carga só confere a cada 60 min
   for (const t of (process.env.TURNOS_MUN || '2,1').split(',').map(s => s.trim()).filter(t => TURNOS[t])) loopMunicipios(t, t === '1' ? 60 : 1);
   // governador no 2º turno (só nos estados com 2º turno), no mesmo ritmo do Brasil
-  if (process.env.GOVERNADOR !== '0' && turnos.includes('2')) {
-    const gov = require('./governador').criar({ getJSON, baixar, emParalelo, gravarJSON, log, armazenamento, CONCORRENCIA });
+  if (process.env.GOVERNADOR !== '0' && turnos.includes('2') && ELEICAO.estadual?.[2]) {
+    const gov = require('./governador').criar({ getJSON, baixar, emParalelo, gravarJSON, log, armazenamento, lerEstado, CONCORRENCIA, eleicao: ELEICAO });
     agendar('2', brasilMin, () => gov.sincronizar(), 'governador');
   }
-  // eleições suplementares do dia (prefeitos etc.), lidas da configuração do TSE
-  if (process.env.SUPLEMENTARES !== '0') {
-    const sup = require('./suplementares').criar({ getJSON, baixar, gravarJSON, log, armazenamento });
-    agendar('2', brasilMin, () => sup.sincronizar(), 'suplementares');
-  }
   log(`sincronização ativa: turnos ${turnos.join(', ')}; Brasil a cada ${brasilMin * 60} s, exterior a cada ${min} min (1º turno a cada ${Math.max(min, 60)} min)`);
+}
+
+// eleição municipal: a coleta de prefeitos fica em server/municipal.js
+function iniciarOutroTipo(brasilMin) {
+  let mod;
+  try { mod = require('./municipal'); } catch { log(`eleição ${ELEICAO.id} (${ELEICAO.tipo}): coleta ao vivo ainda não disponível para este tipo`); return; }
+  const mun = mod.criar({ getJSON, getLote, baixar, emParalelo, gravarJSON, log, armazenamento, lerEstado, CONCORRENCIA, eleicao: ELEICAO });
+  for (const t of Object.keys(ELEICAO.turnos)) agendar(t, t === '1' && ELEICAO.turnos[2] && new Date() > new Date(ELEICAO.turnos[2].data) ? 60 : brasilMin, () => mun.sincronizar(t), 'prefeitos');
+  log(`sincronização ativa: eleição municipal ${ELEICAO.id}, turnos ${Object.keys(ELEICAO.turnos).join(', ')}`);
 }
 
 const sincronizarTurno = async n => { await sincronizarNacional(n); await sincronizarExterior(n); };
 module.exports = { iniciar, sincronizarTurno, sincronizarMunicipios, status };
 if (require.main === module) {
   if (process.argv[2] === '--uma-vez') {
-    armazenamento.iniciar().then(() => Promise.all((process.argv[3] || '2').split(',').map(sincronizarTurno))).catch(e => { console.error(e); process.exit(1); });
-  } else armazenamento.iniciar().then(iniciar);
+    armazenamento.iniciar().then(eleicao.atualizar).then(configurarEleicao).then(() => Promise.all((process.argv[3] || '2').split(',').map(sincronizarTurno))).catch(e => { console.error(e); process.exit(1); });
+  } else armazenamento.iniciar().then(eleicao.atualizar).then(iniciar);
 }

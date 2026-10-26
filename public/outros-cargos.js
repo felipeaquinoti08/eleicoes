@@ -4,7 +4,7 @@
 // Deputados e o Governador do 1º turno vêm do 1º turno já totalizado (dados/historico/2026-1t-estadual.json).
 // Usa funções e estado globais de app.js e governador.js.
 
-const ID_ESTADUAL_1T = '2026-1t-estadual';
+const ID_ESTADUAL_1T = `${window.ELEICAO?.ano || 2026}-1t-estadual`; // 1º turno estadual da eleição acompanhada
 let estadual1T = null, estadual1TCarregando = null, estadual1TFalhouEm = 0;
 
 function carregarEstadual1T() {
