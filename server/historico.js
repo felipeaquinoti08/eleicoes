@@ -148,6 +148,49 @@ async function baixarEleicao(el) {
   return falhas ? 'parcial' : 'ok';
 }
 
+// eleições ordinárias publicadas na configuração do TSE (federal, estadual e municipal, de cada turno). A cada eleição
+// nova o TSE acrescenta a dela ali, e ela passa a ser baixada sem mudar o código; a lista fixa acima continua valendo.
+const TIPO_ORDINARIA = { 8: 'federal', 1: 'estadual', 3: 'municipal' };
+async function ordinariasDaConfiguracao() {
+  const cfg = await baixarJSON(`${RAIZ}/comum/config/ele-c.json`);
+  const hoje = new Date().toISOString().slice(0, 10);
+  const out = [];
+  for (const p of cfg?.pl || []) {
+    const data = p.dt.split('/').reverse().join('-');
+    if (data > hoje) continue; // eleição futura: ainda não há resultado
+    for (const e of p.e || []) {
+      const tipo = TIPO_ORDINARIA[e.tp];
+      if (!tipo || !/Ordinária/i.test(e.nm || '')) continue;
+      const cargos = [...new Set((e.abr || []).flatMap(a => (a.cp || []).map(c => +c.cd)))].filter(c => CARGOS[c]);
+      if (!cargos.length) continue;
+      const ano = data.slice(0, 4);
+      const nomeTipo = { federal: 'Federal', estadual: 'Estadual' }[tipo];
+      out.push({
+        id: `${ano}-${e.t}t-${tipo}`, ciclo: p.c, ele: +e.cd, data, turno: +e.t, cargos,
+        nome: tipo === 'municipal' ? `Eleições Municipais ${ano} · ${e.t}º turno (capitais)` : `Eleição Geral ${ano} · ${e.t}º turno · ${nomeTipo}`,
+        locais: tipo === 'federal' ? 'br+ufs+zz' : tipo === 'estadual' ? 'ufs' : 'capitais',
+      });
+    }
+  }
+  return out;
+}
+
+// estado do histórico, mostrado no /saude
+const statusHistorico = { ultimaPassada: null, proxima: null, novasNaUltimaPassada: [], pendentes: [], erro: null };
+function status() {
+  let indice = null;
+  try { indice = JSON.parse(fs.readFileSync(path.join(DIR, 'indice.json'), 'utf8')); } catch { /* ainda não existe */ }
+  const lista = indice?.eleicoes || [];
+  const ordinarias = lista.filter(e => !e.suplementar);
+  const grupos = [...new Set(ordinarias.map(e => e.grupoNome))];
+  return {
+    ...statusHistorico,
+    indiceGerado: indice?.gerado || null,
+    eleicoes: grupos.length, documentos: ordinarias.length, suplementares: lista.length - ordinarias.length,
+    maisRecente: grupos[0] || null, maisAntiga: grupos[grupos.length - 1] || null,
+  };
+}
+
 // suplementares mais recentes, a partir da configuração geral do TSE
 async function suplementares() {
   const cfg = await baixarJSON(`${RAIZ}/comum/config/ele-c.json`);
@@ -205,11 +248,18 @@ function montarIndice() {
 
 async function sincronizarHistorico() {
   fs.mkdirSync(DIR, { recursive: true });
-  for (const el of ORDINARIAS) {
+  // lista fixa + o que a configuração do TSE tiver de novo
+  const ordinarias = new Map(ORDINARIAS.map(el => [el.id, el]));
+  try { for (const el of await ordinariasDaConfiguracao()) if (!ordinarias.has(el.id)) ordinarias.set(el.id, el); }
+  catch (e) { log('aviso: configuração do TSE indisponível para eleições novas:', e.message); }
+  const novas = [], pendentes = [];
+  for (const el of ordinarias.values()) {
     const st = await baixarEleicao(el);
     if (st === 'indisponivel') log(`${el.nome}: não disponível no TSE`);
-    else if (st !== 'cache' && st !== 'base') log(`${el.nome}: ${st}`);
+    else if (st !== 'cache' && st !== 'base') { log(`${el.nome}: ${st}`); novas.push(el.nome); }
+    try { if (!JSON.parse(fs.readFileSync(path.join(DIR, `${el.id}.json`), 'utf8')).completo) pendentes.push(el.nome); } catch { /* na base ou indisponível */ }
   }
+  Object.assign(statusHistorico, { novasNaUltimaPassada: novas, pendentes });
   let sup = [];
   try { sup = await suplementares(); } catch (e) { log('aviso suplementares:', e.message); }
   for (const el of sup.slice(0, TOTAL)) {
@@ -224,10 +274,17 @@ async function sincronizarHistorico() {
 function iniciarHistorico() {
   // o índice sai na hora com a base embutida e o que já foi baixado; os downloads vêm depois
   try { const l = montarIndice(); log(`índice inicial com ${l.length} eleições`); } catch (e) { log('erro no índice inicial:', e.message); }
-  const rodar = () => sincronizarHistorico().catch(e => log('erro:', e.message));
+  const INTERVALO = 6 * 60 * 60 * 1000;
+  const rodar = async () => {
+    try { await sincronizarHistorico(); statusHistorico.erro = null; }
+    catch (e) { statusHistorico.erro = e.message; log('erro:', e.message); }
+    statusHistorico.ultimaPassada = new Date().toISOString();
+    statusHistorico.proxima = new Date(Date.now() + INTERVALO).toISOString();
+  };
+  statusHistorico.proxima = new Date(Date.now() + 60 * 1000).toISOString();
   setTimeout(rodar, 60 * 1000); // começa depois que a apuração ao vivo já fez a primeira passada
-  setInterval(rodar, 6 * 60 * 60 * 1000); // completa o que faltou a cada 6 h
+  setInterval(rodar, INTERVALO); // confere eleições novas e completa o que faltou a cada 6 h
 }
 
-module.exports = { iniciarHistorico, sincronizarHistorico };
+module.exports = { iniciarHistorico, sincronizarHistorico, status };
 if (require.main === module) sincronizarHistorico();

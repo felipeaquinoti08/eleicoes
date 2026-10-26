@@ -148,7 +148,7 @@ const servidor = http.createServer((req, res) => {
     return res.end(JSON.stringify({
       ok: true, agora: new Date().toISOString(), versao: VERSAO, iniciadoEm: INICIO,
       visitantes: { online, picoHoje: picoOnline.valor, picoEm: picoOnline.em },
-      snapshots, historico: hist, coletas: sync.status(),
+      snapshots, historico: hist, historicoStatus: historico.status(), coletas: sync.status(),
     }, null, 2));
   }
 

@@ -70,6 +70,8 @@ A página **📜 Histórico** (`/historico.html`) é organizada **por eleição*
 
 Em cada uma: mapa do Brasil pelo partido mais votado, filtro por local, candidatos com a situação (eleito, 2º turno) e, nos cargos proporcionais, os 40 mais votados, todos os eleitos e os votos nominais por partido.
 
+**Eleições novas entram sozinhas.** A cada 6 horas o servidor confere a configuração do TSE: quando aparece uma eleição ordinária nova (gerais ou municipais), ela é baixada e passa a fazer parte do histórico quando a apuração termina, sem mudar o código. O card **📜 Histórico** do `/saude` mostra quantas eleições há, a última conferência, as que entraram nela e as que ainda estão com a apuração em andamento.
+
 **Já vem pronto na imagem.** As eleições estão resumidas em `server/historico-base/` (cerca de 3 MB), que vai junto no repositório e no Docker: o histórico aparece assim que o container sobe, sem depender do TSE. O job `server/historico.js` só baixa o que ainda não está na base (eleições novas e suplementares) e guarda em `dados/historico/`.
 
 **Atualizar a base com os Dados Abertos** (fora do container, quando sair um ano novo):
