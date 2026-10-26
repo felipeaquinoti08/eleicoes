@@ -175,6 +175,54 @@ async function ordinariasDaConfiguracao() {
   return out;
 }
 
+// Detalhamento municipal a partir do que o painel coletou ao vivo (presidente e governador do 2º turno), para
+// eleições que já terminaram e ainda não têm o detalhe embutido (os Dados Abertos demoram a publicar).
+function exportarMunicipiosDoAoVivo() {
+  const DADOS = path.dirname(DIR);
+  const ano = (process.env.CICLO_ATUAL || '2026');
+  const tarefas = [
+    { id: `${ano}-2t-federal`, cd: 1, ler: () => JSON.parse(fs.readFileSync(path.join(DADOS, 'cache-mun-2.json'), 'utf8')), comum: true },
+    { id: `${ano}-1t-federal`, cd: 1, ler: () => JSON.parse(fs.readFileSync(path.join(DADOS, 'cache-mun-1.json'), 'utf8')), comum: true },
+    { id: `${ano}-2t-estadual`, cd: 3, ler: () => Object.fromEntries(Object.entries(JSON.parse(fs.readFileSync(path.join(DADOS, 'cache-gov-2.json'), 'utf8')).ufs || {}).map(([uf, e]) => [uf, e.municipios || {}])) },
+  ];
+  let exportados = 0;
+  for (const t of tarefas) {
+    let doc;
+    for (const dir of [DIR, BASE_DIR]) { try { doc = JSON.parse(fs.readFileSync(path.join(dir, `${t.id}.json`), 'utf8')); break; } catch { /* tenta a outra */ } }
+    if (!doc || !doc.completo) continue;
+    const cargo = doc.cargos.find(c => c.cd === t.cd);
+    if (!cargo) continue;
+    if (fs.existsSync(path.join(BASE_DIR, 'mun', t.id, `${t.cd}-SP.json`)) || fs.existsSync(path.join(BASE_DIR, 'mun', t.id, `${t.cd}-DF.json`))) continue; // já embutido
+    let porUF;
+    try { porUF = t.ler(); } catch { continue; }
+    const saidaDir = path.join(DIR, 'mun', t.id);
+    let n = 0;
+    for (const [uf, muns] of Object.entries(porUF)) {
+      const local = cargo.locais.find(l => l.uf === uf && !l.mun);
+      if (!local || !Object.keys(muns).length) continue;
+      // municípios totalmente apurados apenas (dado final)
+      if (Object.values(muns).some(m => m.secTot && m.secRec < m.secTot)) continue;
+      const cands = local.cands.map(c => ({ n: c.n, nome: c.nome, partido: c.partido }));
+      const mun = {};
+      for (const [cd, m] of Object.entries(muns)) mun[cd] = { v: cands.map(c => m.votos?.[c.n] || 0), c: m.comp, a: m.aptos, b: m.brancos, nu: m.nulos, s: m.secTot };
+      fs.mkdirSync(saidaDir, { recursive: true });
+      fs.writeFileSync(path.join(saidaDir, `${t.cd}-${uf}.json`), JSON.stringify({ cargo: t.cd, uf, cands, mun, fonte: 'coleta ao vivo do painel' }));
+      n++;
+    }
+    if (n) exportados += n;
+  }
+  return exportados;
+}
+
+// cargos com detalhamento municipal disponível (embutido ou exportado) para um documento
+function cargosComMunicipios(id) {
+  const cds = new Set();
+  for (const dir of [path.join(BASE_DIR, 'mun', id), path.join(DIR, 'mun', id)]) {
+    try { for (const n of fs.readdirSync(dir)) { const m = /^(\d+)-[A-Z]{2}\.json$/.exec(n); if (m) cds.add(+m[1]); } } catch { /* sem detalhe */ }
+  }
+  return [...cds];
+}
+
 // estado do histórico, mostrado no /saude
 const statusHistorico = { ultimaPassada: null, proxima: null, novasNaUltimaPassada: [], pendentes: [], erro: null };
 function status() {
@@ -238,6 +286,7 @@ function montarIndice() {
     .map(d => ({
       id: d.id, nome: d.nome, data: d.data, turno: d.turno, suplementar: !!d.suplementar, completo: d.completo,
       fonte: d.fonte || 'Sistema de resultados do TSE', cargos: d.cargos.map(c => ({ cd: c.cd, nome: c.nome })), ...grupoDe(d),
+      municipais: cargosComMunicipios(d.id), // cargos com detalhamento por município
     }));
   fs.mkdirSync(DIR, { recursive: true });
   const arq = path.join(DIR, 'indice.json');
@@ -267,6 +316,7 @@ async function sincronizarHistorico() {
     const st = await baixarEleicao(el);
     if (st !== 'cache' && st !== 'base' && st !== 'indisponivel') log(`${el.nome}: ${st}`);
   }
+  try { const n = exportarMunicipiosDoAoVivo(); if (n) log(`detalhamento municipal exportado da coleta ao vivo: ${n} arquivos`); } catch (e) { log('aviso exportação municipal:', e.message); }
   const lista = montarIndice();
   log(`índice com ${lista.length} eleições (${lista.filter(e => !e.suplementar).length} ordinárias, ${lista.filter(e => e.suplementar).length} suplementares)`);
 }
@@ -286,5 +336,5 @@ function iniciarHistorico() {
   setInterval(rodar, INTERVALO); // confere eleições novas e completa o que faltou a cada 6 h
 }
 
-module.exports = { iniciarHistorico, sincronizarHistorico, status };
+module.exports = { iniciarHistorico, sincronizarHistorico, status, exportarMunicipiosDoAoVivo, montarIndice };
 if (require.main === module) sincronizarHistorico();

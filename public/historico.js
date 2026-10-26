@@ -30,12 +30,46 @@ const dataBR = d => d.split('-').reverse().join('/');
 const IBGE_PARA_TSE = Object.fromEntries(Object.entries(MUNICIPIOS).map(([cd, m]) => [m[2], cd]));
 
 let indice = [], eleicao = null, cargo = null, localSel = '', modo = 'cand';
+let munSel = null;          // município selecionado (código TSE) no detalhamento municipal
+const detalhes = new Map(); // cache dos arquivos de detalhamento municipal
 
 function nomeLocal(l) {
   if (l.mun) return `${MUNICIPIOS[l.mun]?.[1] || l.nome || l.mun} (${l.uf})`;
   return UF_NOMES[l.uf] || l.uf;
 }
 const chaveLocal = l => l.mun ? `${l.uf}-${l.mun}` : l.uf;
+
+// ---------------------------------------------------------------- detalhamento municipal
+// Para presidente, governador, senador e prefeito há um arquivo por estado com o resultado de cada município
+// (dados/historico/mun/<eleição>/<cargo>-<UF>.json). Ele é carregado quando o estado é aberto.
+const ehUF = k => /^[A-Z]{2}$/.test(k) && !['BR', 'ZZ', 'VT'].includes(k);
+function ufDoLocal(k) {
+  if (!k) return null;
+  if (k.startsWith('mun:')) return k.slice(4);
+  if (ehUF(k)) return k;
+  const m = /^([A-Z]{2})-\d{5}$/.exec(k);
+  return m ? m[1] : null;
+}
+async function carregarDetalhe(uf) {
+  if (!cargo?.temMun || !uf) return null;
+  const chave = `${cargo.docId}/${cargo.cd}-${uf}`;
+  if (!detalhes.has(chave)) {
+    detalhes.set(chave, fetch(`dados/historico/mun/${chave}.json`).then(r => (r.ok ? r.json() : null)).catch(() => null));
+  }
+  return detalhes.get(chave);
+}
+// resultado de um município no formato dos locais do histórico (cands com pct, comparecimento etc.)
+function resultadoMunicipio(det, cd) {
+  const m = det?.mun?.[cd];
+  if (!m) return null;
+  const cands = m.r
+    ? m.r.map(([n, nome, partido, votos, st]) => ({ n, nome, partido, votos, st, eleito: /^eleit/i.test(st || '') }))
+    : det.cands.map((c, i) => ({ ...c, votos: m.v[i] || 0, st: '', eleito: false }));
+  const validos = cands.reduce((a, c) => a + c.votos, 0);
+  cands.forEach(c => (c.pct = validos ? 100 * c.votos / validos : 0));
+  cands.sort((a, b) => b.votos - a.votos);
+  return { uf: det.uf, mun: cd, cands, validos, comp: m.c, aptos: m.a, brancos: m.b, nulos: m.nu, secTot: m.s, secRec: m.s };
+}
 
 // ---------------------------------------------------------------- mapa
 const mapa = L.map('mapaHist', { zoomControl: false, zoomSnap: 0.25, attributionControl: true }).setView([-14, -52], 4);
@@ -45,57 +79,98 @@ const prontoUFs = carregarGeo('ufs').then(g => {
   camadaUFs = L.geoJSON(g, {
     onEachFeature: (f, layer) => layer.on('click', () => {
       if (!cargo) return;
-      const l = cargo.locais.find(x => x.uf === f.properties.uf && (cargo.locais.length > 1 || true));
+      const uf = f.properties.uf;
+      const l = cargo.locais.find(x => x.uf === uf && !x.mun);
       if (l) escolherLocal(chaveLocal(l));
+      else if (cargo.temMun) escolherLocal(`mun:${uf}`); // prefeito: abre todos os municípios do estado
     }),
   }).addTo(mapa);
 });
 
 function vencedor(l) { return l.cands[0] && l.validos ? l.cands[0] : null; }
 
+let ultimoEnquadramento = '';
 async function renderMapa() {
   await prontoUFs;
   if (camadaMun) { mapa.removeLayer(camadaMun); camadaMun = null; }
   const porUF = {};
   for (const l of cargo.locais) if (l.uf !== 'BR' && l.uf !== 'ZZ') (porUF[l.uf] ||= []).push(l);
-  const sel = cargo.locais.find(l => chaveLocal(l) === localSel);
+  const ufAberta = ufDoLocal(localSel);
+  const det = ufAberta ? await carregarDetalhe(ufAberta) : null;
   const legenda = {};
   camadaUFs.eachLayer(layer => {
     const uf = layer.feature.properties.uf;
     const lista = porUF[uf];
-    const l = lista && lista.length === 1 ? lista[0] : null;
+    const l = lista && lista.length === 1 && !lista[0].mun ? lista[0] : (lista?.find(x => !x.mun) || null);
     const v = l && vencedor(l);
     const cor = v ? corPartido(v.partido) : null;
-    if (v) legenda[v.partido] = cor;
-    const ativo = sel && sel.uf === uf;
+    if (v && !det) legenda[v.partido] = cor;
+    const ativo = ufAberta === uf;
     layer.setStyle({
       weight: ativo ? 3 : 1, color: ativo ? '#facc15' : '#0b1020',
-      fillColor: cor || '#334155', fillOpacity: cor ? (ativo ? 0.9 : 0.7) : 0.25,
+      // com o detalhamento municipal aberto, o estado fica só com o contorno
+      // e os outros estados ficam apagados para não competir com o mapa municipal
+      fillColor: cor || '#334155', fillOpacity: ativo && det ? 0 : det ? 0.12 : cor ? (ativo ? 0.9 : 0.7) : 0.25,
     });
+    const el = layer.getElement();
+    if (el) el.style.pointerEvents = ativo && det ? 'none' : '';
     layer.unbindTooltip();
-    if (l && v) {
-      const rot = l.mun ? `${esc(MUNICIPIOS[l.mun]?.[1] || '')}` : uf;
-      layer.bindTooltip(`<b>${rot}</b><br>${esc(v.nome)} (${esc(v.partido)}) ${pct(v.pct)}`, { sticky: true, className: 'tip' });
-    }
+    if (l && v) layer.bindTooltip(`<b>${uf}</b><br>${esc(v.nome)} (${esc(v.partido)}) ${pct(v.pct)}`, { sticky: true, className: 'tip' });
+    else if (cargo.temMun && !l) layer.bindTooltip(`<b>${uf}</b><br><small>clique para ver os municípios</small>`, { sticky: true, className: 'tip' });
   });
+
+  if (det && ufAberta) {
+    // municípios do estado, coloridos pelo partido mais votado
+    const g = await carregarGeo(`mun-${ufAberta}`);
+    camadaMun = L.geoJSON(g, {
+      style: f => {
+        const cd = IBGE_PARA_TSE[f.properties.ibge];
+        const r = resultadoMunicipio(det, cd);
+        const v = r && r.validos ? r.cands[0] : null;
+        if (v) legenda[v.partido] = corPartido(v.partido);
+        const margem = r && r.cands[1] ? r.cands[0].pct - r.cands[1].pct : 100;
+        const atual = munSel === cd;
+        return {
+          weight: atual ? 3 : 0.4, color: atual ? '#facc15' : '#0b1020',
+          fillColor: v ? corPartido(v.partido) : '#334155', fillOpacity: v ? 0.35 + 0.55 * Math.min(1, margem / 40) : 0.3,
+        };
+      },
+      onEachFeature: (f, layer) => {
+        const cd = IBGE_PARA_TSE[f.properties.ibge];
+        const r = resultadoMunicipio(det, cd);
+        layer.on('click', () => escolherMunicipio(cd));
+        layer.on('mouseover', () => layer.setStyle({ weight: 2, color: '#fff' }));
+        layer.on('mouseout', () => camadaMun.resetStyle(layer));
+        let h = `<b>${esc(MUNICIPIOS[cd]?.[1] || cd)}</b>`;
+        if (r && r.validos) h += r.cands.slice(0, 3).map(c => `<br><span style="color:${corPartido(c.partido)}">●</span> ${esc(c.nome)} <small>${esc(c.partido)}</small> <b>${pct(c.pct)}</b>`).join('') + `<br><small>${fmt(r.comp)} votantes</small>`;
+        else h += '<br><small>sem votos</small>';
+        layer.bindTooltip(h, { sticky: true, className: 'tip' });
+      },
+    }).addTo(mapa);
+    if (munSel) camadaMun.eachLayer(l => { if (IBGE_PARA_TSE[l.feature.properties.ibge] === munSel) l.bringToFront(); });
+  }
   $('legendaHist').innerHTML = Object.entries(legenda).sort().map(([sg, c]) => `<div><i style="background:${c}"></i>${esc(sg)}</div>`).join('') ||
     '<small>sem dados por estado</small>';
 
-  // eleição em um só município (suplementar): mostra o contorno do município
-  const unicoMun = cargo.locais.length === 1 && cargo.locais[0].mun ? cargo.locais[0] : (sel && sel.mun ? sel : null);
-  if (unicoMun) {
-    const uf = unicoMun.uf;
-    const g = await carregarGeo(`mun-${uf}`);
+  // enquadramento: município, estado, eleição de um município só (suplementar) ou o Brasil
+  const sel = cargo.locais.find(l => chaveLocal(l) === localSel);
+  const unicoMun = cargo.locais.length === 1 && cargo.locais[0].mun ? cargo.locais[0] : null;
+  const alvo = munSel ? `m:${munSel}` : ufAberta ? `u:${ufAberta}` : unicoMun ? `s:${unicoMun.mun}` : 'br';
+  if (alvo === ultimoEnquadramento && !unicoMun) return;
+  ultimoEnquadramento = alvo;
+  if (unicoMun && !det) {
+    const g = await carregarGeo(`mun-${unicoMun.uf}`);
     const ibge = MUNICIPIOS[unicoMun.mun]?.[2];
     const v = vencedor(unicoMun);
     camadaMun = L.geoJSON({ ...g, features: g.features.filter(f => f.properties.ibge === ibge) }, {
       style: { weight: 3, color: '#facc15', fillColor: v ? corPartido(v.partido) : '#334155', fillOpacity: 0.85 },
     }).addTo(mapa);
     mapa.flyToBounds(camadaMun.getBounds(), { padding: [60, 60], maxZoom: 10, duration: 1 });
-    return;
-  }
-  if (sel && sel.uf !== 'BR' && sel.uf !== 'ZZ') {
-    camadaUFs.eachLayer(layer => { if (layer.feature.properties.uf === sel.uf) mapa.flyToBounds(layer.getBounds(), { padding: [40, 40], maxZoom: 7, duration: 1 }); });
+  } else if (munSel && camadaMun) {
+    camadaMun.eachLayer(l => { if (IBGE_PARA_TSE[l.feature.properties.ibge] === munSel) mapa.flyToBounds(l.getBounds(), { padding: [80, 80], maxZoom: 9, duration: 1 }); });
+  } else if (ufAberta || (sel && ehUF(sel.uf))) {
+    const uf = ufAberta || sel.uf;
+    camadaUFs.eachLayer(layer => { if (layer.feature.properties.uf === uf) mapa.flyToBounds(layer.getBounds(), { padding: [40, 40], maxZoom: 8, duration: 1 }); });
   } else {
     mapa.flyTo([-14, -52], 4, { duration: 1 });
   }
@@ -111,24 +186,12 @@ function linhaCand(c, i, max) {
     <div class="num"><b style="color:${cor}">${pct(c.pct, 2)}</b><small>${fmt(c.votos)}</small></div></div>`;
 }
 
-function renderResultado() {
-  const el = $('resultadoHist');
-  const l = cargo.locais.find(x => chaveLocal(x) === localSel);
-  if (!l) {
-    // visão geral: quem venceu em cada local
-    const itens = cargo.locais.map(x => ({ x, v: vencedor(x) })).filter(i => i.v).sort((a, b) => nomeLocal(a.x).localeCompare(nomeLocal(b.x), 'pt-BR'));
-    el.innerHTML = `<h3>Mais votado em cada local</h3>` + (itens.map(({ x, v }) => `
-      <div class="res-linha clicavel" data-k="${esc(chaveLocal(x))}" style="cursor:pointer"><span class="pos"></span>
-        <div><div class="nome">${esc(nomeLocal(x))}</div><small style="color:${corPartido(v.partido)}">${esc(v.nome)} · ${esc(v.partido)}</small></div>
-        <div class="num"><b style="color:${corPartido(v.partido)}">${pct(v.pct)}</b><small>${fmt(v.votos)}</small></div></div>`).join('') || '<p class="vazio-hist">Sem resultados.</p>');
-    el.querySelectorAll('[data-k]').forEach(d => d.onclick = () => escolherLocal(d.dataset.k));
-    return;
-  }
+function blocoResultado(titulo, l, proporcional) {
   const est = [
     ['Seções', `${fmt(l.secRec)}/${fmt(l.secTot)}`], ['Votantes', fmt(l.comp) + (l.aptos ? ` <small>${pct(100 * l.comp / l.aptos)}</small>` : '')],
-    ['Válidos (nominais)', fmt(l.validos)], ['Brancos', fmt(l.brancos)], ['Nulos', fmt(l.nulos)], ['Candidatos', fmt(l.cands.length) + (cargo.proporcional ? ' <small>mais votados</small>' : '')],
+    ['Válidos (nominais)', fmt(l.validos)], ['Brancos', fmt(l.brancos)], ['Nulos', fmt(l.nulos)], ['Candidatos', fmt(l.cands.length) + (proporcional ? ' <small>mais votados</small>' : '')],
   ];
-  let h = `<h3>${esc(nomeLocal(l))} · ${esc(cargo.nome)}</h3><div class="res-estat">` + est.map(([k, v]) => `<div class="est"><span>${k}</span><b>${v}</b></div>`).join('') + '</div>';
+  let h = `<h3>${titulo}</h3><div class="res-estat">` + est.map(([k, v]) => `<div class="est"><span>${k}</span><b>${v}</b></div>`).join('') + '</div>';
   if (modo === 'part' && l.partidos) {
     const tot = l.partidos.reduce((a, p) => a + p.votos, 0);
     const max = Math.max(...l.partidos.map(p => 100 * p.votos / tot));
@@ -137,23 +200,93 @@ function renderResultado() {
     const max = Math.max(1, ...l.cands.map(c => c.pct));
     h += l.cands.map((c, i) => linhaCand(c, i, max)).join('');
   }
+  return h;
+}
+
+// lista dos municípios do estado com quem venceu em cada um (clicável)
+function listaMunicipios(det) {
+  const itens = Object.keys(det.mun).map(cd => ({ cd, r: resultadoMunicipio(det, cd) })).filter(i => i.r && i.r.validos)
+    .sort((a, b) => (b.r.comp || 0) - (a.r.comp || 0));
+  return `<h3 class="res-sub">Municípios <small>${fmt(itens.length)} · clique para ver o resultado</small></h3>` + itens.map(({ cd, r }) => {
+    const v = r.cands[0], cor = corPartido(v.partido);
+    return `<div class="res-linha clicavel" data-mun="${cd}"><span class="pos"></span>
+      <div><div class="nome">${esc(MUNICIPIOS[cd]?.[1] || cd)}${MUNICIPIOS[cd]?.[3] ? ' <small>capital</small>' : ''}</div><small style="color:${cor}">${esc(v.nome)} · ${esc(v.partido)}</small></div>
+      <div class="num"><b style="color:${cor}">${pct(v.pct)}</b><small>${fmt(r.comp)} votantes</small></div></div>`;
+  }).join('');
+}
+
+async function renderResultado() {
+  const el = $('resultadoHist');
+  const uf = ufDoLocal(localSel);
+  const det = uf ? await carregarDetalhe(uf) : null;
+
+  if (munSel && det) {
+    // município escolhido no detalhamento
+    const r = resultadoMunicipio(det, munSel);
+    const nome = `${MUNICIPIOS[munSel]?.[1] || munSel} (${uf})`;
+    el.innerHTML = `<button class="voltar-uf" id="voltarUF">← ${esc(localSel.startsWith('mun:') ? UF_NOMES[uf] + ' · todos os municípios' : UF_NOMES[uf])}</button>` +
+      (r ? blocoResultado(`${esc(nome)} · ${esc(cargo.nome)}`, r, false) : '<p class="vazio-hist">Sem votos neste município.</p>');
+    $('voltarUF').onclick = () => escolherMunicipio(null);
+    return;
+  }
+
+  const l = cargo.locais.find(x => chaveLocal(x) === localSel);
+  if (!l && localSel.startsWith('mun:')) {
+    el.innerHTML = det ? `<h3>${esc(UF_NOMES[uf])} · ${esc(cargo.nome)}</h3>` + listaMunicipios(det) : '<p class="vazio-hist">Sem detalhamento por município para este estado.</p>';
+    el.querySelectorAll('[data-mun]').forEach(d => d.onclick = () => escolherMunicipio(d.dataset.mun));
+    return;
+  }
+  if (!l) {
+    // visão geral: quem venceu em cada local
+    const itens = cargo.locais.map(x => ({ x, v: vencedor(x) })).filter(i => i.v).sort((a, b) => nomeLocal(a.x).localeCompare(nomeLocal(b.x), 'pt-BR'));
+    el.innerHTML = `<h3>Mais votado em cada local</h3>` + (itens.map(({ x, v }) => `
+      <div class="res-linha clicavel" data-k="${esc(chaveLocal(x))}" style="cursor:pointer"><span class="pos"></span>
+        <div><div class="nome">${esc(nomeLocal(x))}</div><small style="color:${corPartido(v.partido)}">${esc(v.nome)} · ${esc(v.partido)}</small></div>
+        <div class="num"><b style="color:${corPartido(v.partido)}">${pct(v.pct)}</b><small>${fmt(v.votos)}</small></div></div>`).join('') || '<p class="vazio-hist">Sem resultados.</p>') +
+      (cargo.temMun ? '<p class="dica-hist">Clique num estado no mapa para ver o resultado de cada município.</p>' : '');
+    el.querySelectorAll('[data-k]').forEach(d => d.onclick = () => escolherLocal(d.dataset.k));
+    return;
+  }
+  let h = blocoResultado(`${esc(nomeLocal(l))} · ${esc(cargo.nome)}`, l, cargo.proporcional);
+  if (det && ehUF(localSel)) h += listaMunicipios(det);
+  else if (ehUF(localSel) && !cargo.temMun && !cargo.proporcional) h += '<p class="dica-hist">Esta eleição não tem detalhamento por município.</p>';
+  else if (ehUF(localSel) && cargo.proporcional) h += '<p class="dica-hist">Para deputados e vereadores o histórico guarda o resultado no estado (são centenas de candidatos por município).</p>';
   el.innerHTML = h;
+  el.querySelectorAll('[data-mun]').forEach(d => d.onclick = () => escolherMunicipio(d.dataset.mun));
 }
 
 // ---------------------------------------------------------------- navegação
 function escolherLocal(k) {
   localSel = k;
+  munSel = /^[A-Z]{2}-\d{5}$/.test(k) && cargo.temMun ? k.slice(3) : null; // capital escolhida na lista
   $('hLocal').value = k;
   renderResultado();
   renderMapa();
+  if (typeof atualizarEndereco === 'function') atualizarEndereco();
+}
+
+function escolherMunicipio(cd) {
+  munSel = cd;
+  renderResultado();
+  renderMapa();
+  $('resultadoHist').scrollTop = 0;
 }
 
 function escolherCargo(cd) {
   cargo = eleicao.cargos.find(c => c.cd === cd);
+  munSel = null;
+  ultimoEnquadramento = '';
   $('cargos').querySelectorAll('button').forEach(b => b.classList.toggle('ativa', +b.dataset.cd === cd));
   const locais = [...cargo.locais].sort((a, b) => (a.uf === 'BR' ? -1 : b.uf === 'BR' ? 1 : nomeLocal(a).localeCompare(nomeLocal(b), 'pt-BR')));
   const geral = locais.length > 1 ? '<option value="">Visão geral (todos os locais)</option>' : '';
-  $('hLocal').innerHTML = geral + locais.map(l => `<option value="${esc(chaveLocal(l))}">${esc(nomeLocal(l))}</option>`).join('');
+  // prefeito: além das capitais, todos os municípios de cada estado
+  const temUFs = locais.some(l => ehUF(l.uf) && !l.mun);
+  const porEstado = cargo.temMun && !temUFs
+    ? '<optgroup label="Todos os municípios do estado">' + Object.keys(UF_NOMES).filter(ehUF).sort((a, b) => UF_NOMES[a].localeCompare(UF_NOMES[b], 'pt-BR'))
+      .map(uf => `<option value="mun:${uf}">${esc(UF_NOMES[uf])}</option>`).join('') + '</optgroup>'
+    : '';
+  $('hLocal').innerHTML = geral + (porEstado ? '<optgroup label="Capitais">' : '') +
+    locais.map(l => `<option value="${esc(chaveLocal(l))}">${esc(nomeLocal(l))}</option>`).join('') + (porEstado ? '</optgroup>' + porEstado : '');
   $('hModo').disabled = !cargo.proporcional;
   if (!cargo.proporcional) { modo = 'cand'; $('hModo').value = 'cand'; }
   const br = locais.find(l => l.uf === 'BR');
@@ -202,13 +335,18 @@ async function carregarDocs(ids) {
 }
 
 function mostrarEleicao(titulo, subtitulo, docs, cargoInicial, localInicial) {
+  // cada cargo guarda de qual documento veio e se tem detalhamento por município (índice do servidor)
+  for (const d of docs) {
+    const ent = indice.find(e => e.id === d.id);
+    for (const c of d.cargos) { c.docId = d.id; c.temMun = !!(c.detalheMunicipal || ent?.municipais?.includes(c.cd)); }
+  }
   eleicao = { cargos: docs.flatMap(d => d.cargos).sort((a, b) => a.cd - b.cd), completo: docs.every(d => d.completo) };
   $('cabecalhoEleicao').innerHTML = `<h2>${esc(titulo)}</h2><small>${subtitulo}` + (eleicao.completo ? '' : ' · <b>apuração ainda não encerrada</b>') + '</small>';
   $('cargos').innerHTML = eleicao.cargos.map(c => `<button data-cd="${c.cd}">${esc(c.nome)}</button>`).join('');
   $('cargos').querySelectorAll('button').forEach(b => b.onclick = () => { escolherCargo(+b.dataset.cd); atualizarEndereco(); });
   const c = eleicao.cargos.find(x => x.cd === cargoInicial) || eleicao.cargos[0];
   escolherCargo(c.cd);
-  if (localInicial && c.locais.some(l => chaveLocal(l) === localInicial)) escolherLocal(localInicial);
+  if (localInicial && (c.locais.some(l => chaveLocal(l) === localInicial) || /^mun:[A-Z]{2}$/.test(localInicial))) escolherLocal(localInicial);
 }
 
 async function escolherGrupo(chave, turno, cargoInicial, localInicial) {

@@ -70,3 +70,11 @@
 
 .hist-acoes { display: flex; gap: 10px; align-items: center; }
 .link-codigo { color: var(--suave); font-size: 13px; }
+
+/* detalhamento por município */
+.res-sub { margin: 16px 0 6px; font-size: 15px; border-top: 1px solid var(--borda); padding-top: 12px; }
+.res-sub small { color: var(--suave); font-weight: 400; font-size: 12px; }
+.res-linha.clicavel { cursor: pointer; }
+.res-linha.clicavel:hover { background: var(--painel2); }
+.voltar-uf { background: var(--painel2); border: 1px solid var(--borda); border-radius: 8px; padding: 5px 10px; margin-bottom: 8px; font-size: 13px; }
+.dica-hist { color: var(--suave); font-size: 12px; margin-top: 12px; }

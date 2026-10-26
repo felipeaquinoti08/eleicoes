@@ -64,22 +64,24 @@ A página **📜 Histórico** (`/historico.html`) é organizada **por eleição*
 
 | Eleição | Cargos | Fonte |
 |---|---|---|
-| Eleições Gerais 2026, 2022, 2018, 2014, 2010 | Presidente (Brasil, estados e exterior), Governador, Senador, Deputado Federal, Estadual e Distrital (por estado) | 2026: sistema de resultados do TSE · demais: Portal de Dados Abertos do TSE |
-| Eleições Municipais 2024, 2020, 2016, 2012, 2008 | Prefeito e Vereador nas capitais | 2024: sistema de resultados do TSE · demais: Portal de Dados Abertos do TSE |
+| Eleições Gerais 2026, 2022, 2018, 2014, 2010 | Presidente (Brasil, estados e exterior), Governador, Senador, Deputado Federal, Estadual e Distrital (por estado) | Portal de Dados Abertos do TSE · 2º turno de 2026: coleta ao vivo do painel |
+| Eleições Municipais 2024, 2020, 2016, 2012, 2008 | Prefeito (todos os municípios) e Vereador (capitais) | Portal de Dados Abertos do TSE |
 | Eleições suplementares | As 20 mais recentes (prefeitos, vereadores, governador), num grupo à parte | sistema de resultados do TSE |
 
 Em cada uma: mapa do Brasil pelo partido mais votado, filtro por local, candidatos com a situação (eleito, 2º turno) e, nos cargos proporcionais, os 40 mais votados, todos os eleitos e os votos nominais por partido.
 
+**Detalhamento por município**, igual ao do painel ao vivo: em Presidente, Governador, Senador e Prefeito, clicar num estado abre o mapa dos municípios (cor do partido mais votado, mais forte quanto maior a vantagem, com os 3 primeiros ao passar o mouse) e, na coluna da direita, a lista de municípios do estado. Clicar num município mostra o resultado completo dele, e o botão **←** volta ao estado. Em Prefeito, o filtro de local tem **Todos os municípios do estado** além das capitais. Os arquivos ficam em `server/historico-base/mun/<eleição>/<cargo>-<UF>.json` (cerca de 17 MB no total) e só são baixados pelo navegador quando o estado é aberto. Deputados e vereadores continuam por estado/capital (são centenas de candidatos por município). Quando uma eleição nova termina, o servidor gera esse detalhamento a partir do que o painel coletou ao vivo.
+
 **Eleições novas entram sozinhas.** A cada 6 horas o servidor confere a configuração do TSE: quando aparece uma eleição ordinária nova (gerais ou municipais), ela é baixada e passa a fazer parte do histórico quando a apuração termina, sem mudar o código. O card **📜 Histórico** do `/saude` mostra quantas eleições há, a última conferência, as que entraram nela e as que ainda estão com a apuração em andamento.
 
-**Já vem pronto na imagem.** As eleições estão resumidas em `server/historico-base/` (cerca de 3 MB), que vai junto no repositório e no Docker: o histórico aparece assim que o container sobe, sem depender do TSE. O job `server/historico.js` só baixa o que ainda não está na base (eleições novas e suplementares) e guarda em `dados/historico/`.
+**Já vem pronto na imagem.** As eleições estão resumidas em `server/historico-base/` (cerca de 3 MB, mais 17 MB do detalhamento por município), que vai junto no repositório e no Docker: o histórico aparece assim que o container sobe, sem depender do TSE. O job `server/historico.js` só baixa o que ainda não está na base (eleições novas e suplementares) e guarda em `dados/historico/`.
 
 **Atualizar a base com os Dados Abertos** (fora do container, quando sair um ano novo):
 ```bash
 # baixe os zips de https://cdn.tse.jus.br/estatistica/sead/odsele/votacao_candidato_munzona/ e .../detalhe_votacao_munzona/
 node tools/importar-dados-abertos.js <pasta-com-os-zips> 2022 2020 2018
 ```
-O sistema de resultados do TSE só publica os ciclos 2024 e 2026; por isso os anos anteriores vêm dos Dados Abertos. Os totais conferem com os resultados oficiais (ex.: 2022, Lula 50,90% no 2º turno; 2018, Bolsonaro 55,13%; 2014, Dilma 51,64%).
+O sistema de resultados do TSE só publica os ciclos 2024 e 2026; por isso o histórico vem dos Dados Abertos, que também trazem o resultado por município. Os totais conferem com os resultados oficiais (ex.: 2022, Lula 50,90% no 2º turno; 2018, Bolsonaro 55,13%; 2014, Dilma 51,64%).
 
 ## Ao vivo ou resultados
 

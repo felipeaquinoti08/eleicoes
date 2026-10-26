@@ -15,6 +15,9 @@ const { spawn } = require('child_process');
 const SAIDA = path.join(__dirname, '..', 'server', 'historico-base');
 const CARGOS = { 1: 'Presidente', 3: 'Governador', 5: 'Senador', 6: 'Deputado Federal', 7: 'Deputado Estadual', 8: 'Deputado Distrital', 11: 'Prefeito', 13: 'Vereador' };
 const PROPORCIONAL = new Set([6, 7, 8, 13]);
+// cargos com detalhamento por município (um arquivo por estado em historico-base/mun/<eleição>/<cargo>-<UF>.json)
+const MAJORITARIOS = new Set([1, 3, 5, 11]);
+const UFS_BR = new Set(['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO']);
 const CAPITAIS = new Set(['01392', '27855', '02550', '06050', '38490', '13897', '57053', '93734', '09210', '41238', '90514', '90670', '04278',
   '20516', '25313', '12190', '75353', '60011', '17612', '00035', '03018', '88013', '81051', '31054', '71072', '73440']);
 
@@ -71,6 +74,9 @@ async function importarAno(dir, ano) {
   // acc[turno][cargo][local] = { cands: Map, aptos, comp, brancos, nulos, secoes }
   const acc = {};
   const meta = {}; // turno -> { data, ele por abrangência }
+  // accMun[turno][cargo][uf][mun] = { v: Map(sq -> votos), meta: Map(sq -> candidato), aptos, comp, brancos, nulos, secoes }
+  const accMun = {};
+  const destinoMun = (t, cargo, uf, mun) => ((((accMun[t] ||= {})[cargo] ||= {})[uf] ||= {})[mun] ||= { v: new Map(), meta: new Map(), aptos: 0, comp: 0, brancos: 0, nulos: 0, secoes: 0 });
   const destino = (t, cargo, local) => (((acc[t] ||= {})[cargo] ||= {})[local] ||= { cands: new Map(), aptos: 0, comp: 0, brancos: 0, nulos: 0, secoes: 0 });
 
   // locais de um registro: presidente vai para a UF (ou ZZ) e para BR; estaduais para a UF; municipais só nas capitais
@@ -99,6 +105,12 @@ async function importarAno(dir, ano) {
         if (!c) d.cands.set(sq, (c = { n: get('NR_CANDIDATO'), nome: get('NM_URNA_CANDIDATO'), partido: get('SG_PARTIDO'), votos: 0, st: tituloSituacao(get('DS_SIT_TOT_TURNO')) }));
         c.votos += votos;
       }
+      const uf = get('SG_UF');
+      if (MAJORITARIOS.has(cargo) && UFS_BR.has(uf)) {
+        const dm = destinoMun(t, cargo, uf, padMun(get('CD_MUNICIPIO')));
+        dm.v.set(sq, (dm.v.get(sq) || 0) + votos);
+        if (!dm.meta.has(sq)) dm.meta.set(sq, { n: get('NR_CANDIDATO'), nome: get('NM_URNA_CANDIDATO'), partido: get('SG_PARTIDO'), st: tituloSituacao(get('DS_SIT_TOT_TURNO')) });
+      }
     });
   }
   const entradasDet = (await listarZip(zipDet)).filter(e => /\.csv$/i.test(e) && !/_BRASIL\.csv$/i.test(e));
@@ -116,6 +128,12 @@ async function importarAno(dir, ano) {
         d.brancos += n(get('QT_VOTOS_BRANCOS'));
         d.nulos += n(get('QT_TOTAL_VOTOS_NULOS') ?? get('QT_VOTOS_NULOS'));
         d.secoes += n(get('QT_TOTAL_SECOES'));
+      }
+      const uf = get('SG_UF');
+      const dm = MAJORITARIOS.has(cargo) && UFS_BR.has(uf) ? accMun[t]?.[cargo]?.[uf]?.[padMun(get('CD_MUNICIPIO'))] : null;
+      if (dm) {
+        dm.aptos += n(get('QT_APTOS')); dm.comp += n(get('QT_COMPARECIMENTO')); dm.brancos += n(get('QT_VOTOS_BRANCOS'));
+        dm.nulos += n(get('QT_TOTAL_VOTOS_NULOS') ?? get('QT_VOTOS_NULOS')); dm.secoes += n(get('QT_TOTAL_SECOES'));
       }
     });
   }
@@ -160,9 +178,45 @@ async function importarAno(dir, ano) {
     }
   }
   fs.mkdirSync(SAIDA, { recursive: true });
+  for (const d of docs) gravarMunicipios(d, accMun[d.turno]);
   for (const d of docs) {
     fs.writeFileSync(path.join(SAIDA, `${d.id}.json`), JSON.stringify(d));
     console.log(`${d.id}: ${d.cargos.map(c => `${c.nome} (${c.locais.length})`).join(', ')}`);
+  }
+}
+
+// detalhamento por município: um arquivo por cargo e estado. Para presidente, governador e senador os candidatos
+// são os mesmos no estado (lista única + votos alinhados); para prefeito cada município tem os seus.
+function gravarMunicipios(doc, porCargo) {
+  if (!porCargo) return;
+  for (const cargo of doc.cargos) {
+    if (!MAJORITARIOS.has(cargo.cd) || !porCargo[cargo.cd]) continue;
+    const dir = path.join(SAIDA, 'mun', doc.id);
+    fs.mkdirSync(dir, { recursive: true });
+    let arquivos = 0;
+    for (const [uf, muns] of Object.entries(porCargo[cargo.cd])) {
+      let saida;
+      if (cargo.cd === 11) {
+        const mun = {};
+        for (const [cd, d] of Object.entries(muns)) {
+          const r = [...d.v.entries()].map(([sq, v]) => { const m = d.meta.get(sq); return [m.n, m.nome, m.partido, v, m.st && !m.st.startsWith('#') ? m.st : '']; }).sort((a, b) => b[3] - a[3]);
+          if (r.some(x => x[3] > 0)) mun[cd] = { r, c: d.comp, a: d.aptos, b: d.brancos, nu: d.nulos, s: d.secoes };
+        }
+        saida = { cargo: cargo.cd, uf, mun };
+      } else {
+        const meta = new Map();
+        for (const d of Object.values(muns)) for (const [sq, m] of d.meta) if (!meta.has(sq)) meta.set(sq, m);
+        const total = new Map();
+        for (const d of Object.values(muns)) for (const [sq, v] of d.v) total.set(sq, (total.get(sq) || 0) + v);
+        const ordem = [...meta.keys()].filter(sq => total.get(sq) > 0).sort((a, b) => total.get(b) - total.get(a));
+        const mun = {};
+        for (const [cd, d] of Object.entries(muns)) mun[cd] = { v: ordem.map(sq => d.v.get(sq) || 0), c: d.comp, a: d.aptos, b: d.brancos, nu: d.nulos, s: d.secoes };
+        saida = { cargo: cargo.cd, uf, cands: ordem.map(sq => { const m = meta.get(sq); return { n: m.n, nome: m.nome, partido: m.partido }; }), mun };
+      }
+      fs.writeFileSync(path.join(dir, `${cargo.cd}-${uf}.json`), JSON.stringify(saida));
+      arquivos++;
+    }
+    cargo.detalheMunicipal = arquivos > 0;
   }
 }
 
