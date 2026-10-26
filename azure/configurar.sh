@@ -75,5 +75,9 @@ AZURE_CLIENT_SECRET_EXPIRA=$(date -u -d '+1 year' +%Y-%m-%d 2>/dev/null || date 
 SAS de leitura para o Cloudflare (vai na regra de reescrita ou no secret do Worker, nunca no servidor):
 $SAS
 
-Origem para o Cloudflare: $CONTA.blob.core.windows.net
+No Cloudflare (DNS):
+  asverify.<subdomínio-dos-dados>  CNAME  asverify.$CONTA.blob.core.windows.net   (sem proxy)
+  <subdomínio-dos-dados>           CNAME  $CONTA.blob.core.windows.net            (com proxy)
+Depois que o DNS propagar, registre o domínio no Azure:
+  az storage account update -g $RG -n $CONTA --custom-domain <subdomínio-dos-dados> --use-subdomain true
 FIM
