@@ -1,20 +1,17 @@
 'use strict';
 // 2º turno para Governador (eleição 6260 em 2026): só nos estados que tiveram 2º turno.
 // Cada estado tem os próprios candidatos. Publica dados/gov-2.json com o total de cada UF e os municípios.
-const fs = require('fs');
-const path = require('path');
 
 const RAIZ = 'https://resultados.tse.jus.br/oficial';
 const ELE = 6260;
 const CARGO = 3;
 const UFS_PADRAO = ['AM', 'RN', 'DF', 'ES', 'AC', 'TO'];
 
-function criar({ getJSON, baixar, emParalelo, gravarJSON, log, DIR_DADOS, CONCORRENCIA }) {
+function criar({ getJSON, baixar, emParalelo, gravarJSON, log, armazenamento, CONCORRENCIA }) {
   const pad = (v, n) => String(v).padStart(n, '0');
   const base = `${RAIZ}/ele2026/${ELE}/dados`;
-  const arqEstado = path.join(DIR_DADOS, 'cache-gov-2.json');
-  let estado;
-  try { estado = JSON.parse(fs.readFileSync(arqEstado, 'utf8')); } catch { estado = { ufs: {} }; }
+  const arqEstado = 'cache-gov-2.json';
+  const estado = armazenamento.lerJSON(arqEstado) || { ufs: {} };
   let ufsGov = null;
 
   async function descobrirUFs() {
@@ -45,20 +42,18 @@ function criar({ getJSON, baixar, emParalelo, gravarJSON, log, DIR_DADOS, CONCOR
   };
 
   async function baixarFotos(uf, cands) {
-    const dir = path.join(DIR_DADOS, 'fotos');
-    fs.mkdirSync(dir, { recursive: true });
     for (const c of cands) {
-      const arq = path.join(dir, `${c.sq}.jpeg`);
-      if (!/^\d+$/.test(c.sq) || fs.existsSync(arq)) continue;
+      const arq = `fotos/${c.sq}.jpeg`;
+      if (!/^\d+$/.test(c.sq) || armazenamento.existe(arq)) continue;
       for (const pasta of [uf.toLowerCase(), 'br']) {
-        try { fs.writeFileSync(arq, Buffer.from(await (await baixar(`${RAIZ}/ele2026/${ELE}/fotos/${pasta}/${c.sq}.jpeg`, 4)).arrayBuffer())); break; }
+        try { armazenamento.gravar(arq, Buffer.from(await (await baixar(`${RAIZ}/ele2026/${ELE}/fotos/${pasta}/${c.sq}.jpeg`, 4)).arrayBuffer())); break; }
         catch { /* tenta a outra pasta */ }
       }
     }
   }
 
   function publicar() {
-    gravarJSON(path.join(DIR_DADOS, 'gov-2.json'), { gerado: new Date().toISOString(), ele: ELE, cargo: 'Governador', ufs: estado.ufs });
+    gravarJSON('gov-2.json', { gerado: new Date().toISOString(), ele: ELE, cargo: 'Governador', ufs: estado.ufs });
     gravarJSON(arqEstado, estado);
   }
 
@@ -106,7 +101,7 @@ function criar({ getJSON, baixar, emParalelo, gravarJSON, log, DIR_DADOS, CONCOR
       publicar();
       const sec = ufs.reduce((a, uf) => a + (estado.ufs[uf]?.total?.secRec || 0), 0);
       log(`governador 2º turno: ${ufs.join(', ')} · ${sec} seções · ${munBaixados} municípios atualizados${falhas ? `, ${falhas} falhas` : ''} em ${((Date.now() - inicio) / 1000).toFixed(1)}s`);
-    } else if (!fs.existsSync(path.join(DIR_DADOS, 'gov-2.json')) && Object.keys(estado.ufs).length) publicar();
+    } else if (!armazenamento.existe('gov-2.json') && Object.keys(estado.ufs).length) publicar();
     return {
       estados: ufs.join(', '), semNovidade: !mudou, municipiosAtualizados: munBaixados, falhas,
       secoesApuradas: ufs.reduce((a, uf) => a + (estado.ufs[uf]?.total?.secRec || 0), 0),

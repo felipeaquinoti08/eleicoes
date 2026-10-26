@@ -1,5 +1,7 @@
 'use strict';
 
+// onde ficam os dados publicados pelo servidor: /dados/ ou uma CDN (window.DADOS_BASE é injetado pelo servidor no HTML)
+const DADOS = window.DADOS_BASE || 'dados/';
 const BASE = 'https://resultados.tse.jus.br/oficial/ele2026';
 const TURNOS = {
   1: { ele: 6257, pleito: 3220, nome: '1º turno' },
@@ -148,7 +150,7 @@ function definirCandidatos(lista) {
 // Se ele existir, o painel lê só esse arquivo e não consulta o TSE diretamente.
 let modoServidor = null; // null = ainda não detectado
 async function carregarSnapshot() {
-  const r = await fetch(`dados/turno-${cfg.turno}.json`, { cache: 'no-cache' });
+  const r = await fetch(`${DADOS}turno-${cfg.turno}.json`, { cache: 'no-cache' });
   if (!r.ok) return false;
   const snap = await r.json();
   definirCandidatos(snap.candidatos);
@@ -249,11 +251,11 @@ async function carregarOficiaisCidades() {
 const versaoMun = {};
 async function carregarMunicipiosUF(uf) {
   if (modoServidor) {
-    const r = await fetch(`dados/turno-${cfg.turno}-mun-${uf}.json`, { cache: 'no-cache' });
+    const r = await fetch(`${DADOS}turno-${cfg.turno}-mun-${uf}.json`, { cache: 'no-cache' });
     if (r.ok) munDados[uf] = (await r.json()).municipios;
     // no 2º turno, o 1º turno de cada município serve de referência na dica do mapa
     if (cfg.turno === '2' && !munDados1[uf]) {
-      const r1 = await fetch(`dados/turno-1-mun-${uf}.json`, { cache: 'no-cache' }).catch(() => null);
+      const r1 = await fetch(`${DADOS}turno-1-mun-${uf}.json`, { cache: 'no-cache' }).catch(() => null);
       if (r1 && r1.ok) munDados1[uf] = (await r1.json()).municipios;
     }
     return;
@@ -294,12 +296,12 @@ async function atualizar() {
       const uf = ufEmFoco();
       if (uf) await carregarMunicipiosUF(uf).catch(e => console.warn(e));
       if (cfg.turno === '2') { // governador no 2º turno (estados com 2º turno)
-        try { const rg = await fetch('dados/gov-2.json', { cache: 'no-cache' }); if (rg.ok) gov = await rg.json(); } catch { /* sem governador */ }
-        try { const rs = await fetch('dados/sup-hoje.json', { cache: 'no-cache' }); if (rs.ok) suplementares = (await rs.json()).eleicoes || []; } catch { /* sem suplementares */ }
+        try { const rg = await fetch(DADOS + 'gov-2.json', { cache: 'no-cache' }); if (rg.ok) gov = await rg.json(); } catch { /* sem governador */ }
+        try { const rs = await fetch(DADOS + 'sup-hoje.json', { cache: 'no-cache' }); if (rs.ok) suplementares = (await rs.json()).eleicoes || []; } catch { /* sem suplementares */ }
       }
       projecao = null;
       if (cfg.turno === '2') {
-        try { const rp = await fetch('dados/projecao-2.json', { cache: 'no-cache' }); if (rp.ok) projecao = await rp.json(); } catch { /* sem projeção */ }
+        try { const rp = await fetch(DADOS + 'projecao-2.json', { cache: 'no-cache' }); if (rp.ok) projecao = await rp.json(); } catch { /* sem projeção */ }
       }
       status(ok ? '' : 'Servidor ainda sincronizando com o TSE…');
       return;
@@ -920,7 +922,7 @@ function horaTSE() {
   return { data, texto: hoje ? `${m[4]}:${m[5]}` : `${m[1]}/${m[2]} ${m[4]}:${m[5]}` };
 }
 
-function foto(c) { return modoServidor ? `dados/fotos/${c.sq}.jpeg` : `${BASE}/${T.ele}/fotos/br/${c.sq}.jpeg`; }
+function foto(c) { return modoServidor ? `${DADOS}fotos/${c.sq}.jpeg` : `${BASE}/${T.ele}/fotos/br/${c.sq}.jpeg`; }
 // se a foto falhar, mostra as iniciais do candidato no lugar
 const iniciais = nome => nome.split(/\s+/).filter(Boolean).slice(0, 2).map(p => p[0]).join('');
 function imgFoto(c) { return `<span class="foto" data-ini="${esc(iniciais(c.nome))}"><img src="${foto(c)}" alt="" onerror="this.remove()"></span>`; }

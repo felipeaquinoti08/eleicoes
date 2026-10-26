@@ -121,6 +121,7 @@ TSE ──► server/sync.js (job) ──► dados/*.json ──► server/serve
 - O **job de sincronização** é o único cliente que fala com o TSE. A cada ciclo (5 min por padrão) baixa o total do país, as 27 UFs, o exterior e os BUs novos. Os municípios rodam num loop separado e incremental: o arquivo agregado de cada UF diz quais municípios mudaram, e só esses são baixados.
 - Os resultados ficam em snapshots (`dados/turno-N.json` e `dados/turno-N-mun-<UF>.json`). O painel lê só esses arquivos, então o número de espectadores não aumenta a carga sobre o TSE, que em dia de eleição responde muito HTTP 429. O job tenta de novo com espera crescente e mantém o último dado bom quando algo falha.
 - Tudo o que foi coletado (snapshots, BUs decodificados, municípios, projeção, histórico) fica na pasta `dados/` do servidor. Ao subir de novo, o servidor entrega esses arquivos na hora, e o ciclo de coleta só atualiza por cima.
+- Opcionalmente, os dados ficam no **Azure Blob** e o navegador os lê direto de lá, pela CDN, sem passar pelo servidor (veja [Armazenamento no Azure Blob](#armazenamento-no-azure-blob-opcional)).
 - Sem servidor (abrindo os arquivos de `public/` com `servidor.ps1`), o painel percebe que `/saude` não existe e consulta o TSE direto do navegador.
 
 ## Rodar com Docker
@@ -152,7 +153,7 @@ docker inspect --format "{{.State.Health.Status}}" apuracao-eleicoes   # healthy
 | `HISTORICO_QTD` | `20` | Quantas eleições suplementares entram no histórico |
 | `SUPLEMENTARES_DIAS` | `7` | Até quantos dias depois as suplementares continuam no painel |
 
-No `.env`: `NPM_REDE` (rede do Nginx Proxy Manager, obrigatória) e `DADOS` (opcional, pasta absoluta para os dados no lugar do volume).
+No `.env`: `NPM_REDE` (rede do Nginx Proxy Manager, obrigatória) e `DADOS` (opcional, pasta absoluta para os dados no lugar do volume). As variáveis do Azure Blob (`AZURE_*` e `DADOS_URL_PUBLICA`) também ficam no `.env`; veja a seção [Armazenamento no Azure Blob](#armazenamento-no-azure-blob-opcional).
 
 ### Dados persistentes entre deploys
 
@@ -210,6 +211,137 @@ docker buildx build --platform linux/amd64,linux/arm64 -t SEU_REGISTRY/apuracao-
 ```
 
 Se a imagem Alpine der problema em alguma placa ARM, dá para trocar a base sem mexer no resto: `docker compose build --build-arg NODE_IMAGE=node:22-bookworm-slim`.
+
+## Armazenamento no Azure Blob (opcional)
+
+Sem configurar nada, tudo funciona como descrito acima: os dados ficam na pasta do servidor e ele mesmo os entrega. Com o Azure Blob, o servidor só **coleta e grava**; quem lê os dados é o **navegador**, direto do Blob, com uma CDN fazendo cache na frente. O tráfego dos visitantes deixa de passar pelo servidor, e nada fica gravado no container.
+
+```
+TSE ──► servidor (coleta) ──grava──► Azure Blob (privado) ◄── Cloudflare (cache) ◄── navegador: dados
+                                                                                  navegador: páginas ──► NPM ──► servidor
+```
+
+### Escolha o seu caminho
+
+| Caminho | Para quem | O que precisa |
+|---|---|---|
+| **1. Local** (padrão) | Quem não quer Azure | Nada. Volume Docker, como sempre |
+| **2. Azure + regras do Cloudflare** (recomendado) | Domínio no Cloudflare | Azure + 4 regras no Cloudflare. Sem custo de Worker |
+| **3. Azure + Cloudflare Worker** | Domínio no Cloudflare, sem a opção de reescrever o Host no seu plano | Azure + o Worker de `cloudflare/worker.js` |
+| **4. Azure sem Cloudflare** | Quem não usa Cloudflare ou não pode mexer nele | Azure. O servidor repassa os dados do Blob (dá para pôr cache no Nginx) |
+
+Nos caminhos 2 a 4, o container do Blob é **privado**: ninguém lê direto de `*.blob.core.windows.net`, então o tráfego passa pelo cache e o custo de saída do Azure fica previsível.
+
+### Segurança: o que fica onde
+
+| Credencial | Onde fica | O que permite |
+|---|---|---|
+| Service principal (`AZURE_CLIENT_SECRET`) | Só no `.env` do servidor | Ler, criar e sobrescrever blobs nos dois containers do projeto. **Não apaga** nada (papel personalizado `Eleicoes Gravador Blob`) |
+| SAS de leitura | Só no Cloudflare (regra ou secret do Worker) | Ler blobs do container público. Não lista, não grava, não vê o container interno. Revogável apagando a política `leitura-cdn` |
+| Chaves da storage account | Só no Azure | Não são usadas em lugar nenhum. Ficam ativas só porque assinam o SAS |
+
+- O repositório é público: **nenhum valor vai para o Git**. O `.env.example` traz só os nomes das variáveis.
+- O servidor nunca escreve o segredo nem o token nos logs ou no `/saude`. Uma falha de login aparece só como `Entra ID recusou o login do service principal (HTTP 401, invalid_client)`.
+- São dois containers: `eleicoes` (o que o navegador lê) e `eleicoes-interno` (estado da coleta, `cache-*.json`). O SAS do Cloudflare só alcança o primeiro.
+- A lixeira (30 dias) e o versionamento ficam ativos: nada sobrescrito ou apagado se perde. As versões com mais de 7 dias são apagadas pelo próprio Azure (o snapshot da apuração é regravado a cada 30 s).
+- O segredo vale 1 ano. Com `AZURE_CLIENT_SECRET_EXPIRA` preenchido, o `/saude` avisa 30 dias antes.
+
+### Passo 1: criar o armazenamento no Azure
+
+No [Azure Cloud Shell](https://shell.azure.com) (Bash), com este repositório clonado:
+
+```bash
+CONTA=eleicoesdados123 RG=rg-eleicoes LOCAL=brazilsouth bash azure/configurar.sh
+```
+
+O script cria a storage account (privada, só HTTPS e TLS 1.2+), a lixeira, o versionamento, a regra de ciclo de vida, os dois containers, o papel personalizado, o service principal com esse papel nos dois containers e o SAS de leitura. No final, ele mostra **uma vez** as linhas para o `.env` e o SAS para o Cloudflare. Copie e feche o terminal.
+
+<details><summary>Prefere fazer pelo portal?</summary>
+
+1. **Storage account**: StorageV2, redundância LRS. Em *Configuração*: "Permitir acesso anônimo ao Blob" **desativado**, "Transferência segura" ativada, TLS mínimo 1.2.
+2. **Proteção de dados**: exclusão temporária de blobs e de contêineres (30 dias) e controle de versão ativados.
+3. **Gerenciamento do ciclo de vida**: regra que exclui versões anteriores com mais de 7 dias (`azure/ciclo-de-vida.json`).
+4. **Contêineres** `eleicoes` e `eleicoes-interno`, nível de acesso **Privado**.
+5. **Papel personalizado** na assinatura, a partir de `azure/papel-gravador.json` (troque `SUBSCRIPTION_ID`).
+6. **Registro de aplicativo** no Entra ID → *Certificados e segredos* → novo segredo com validade de 12 meses. Anote o ID do aplicativo, o ID do locatário e o segredo.
+7. Em cada contêiner → *Controle de acesso (IAM)*: atribua o papel `Eleicoes Gravador Blob` ao aplicativo.
+8. No contêiner `eleicoes` → *Política de acesso*: política `leitura-cdn` com permissão só de **Leitura** e validade de 1 ano. Depois, *Gerar SAS* usando essa política, só HTTPS. Guarde o token, sem o `?`.
+</details>
+
+### Passo 2 (caminho 2): regras do Cloudflare
+
+Exemplo com o subdomínio `dados.eleicoes.seu-dominio` e a conta `eleicoesdados123`:
+
+1. **DNS**: registro `CNAME` `dados.eleicoes` → `eleicoesdados123.blob.core.windows.net`, **com proxy** (nuvem laranja).
+2. **Rules → Origin Rules**: quando *Hostname equals* `dados.eleicoes.seu-dominio`, **Host Header → Rewrite to** `eleicoesdados123.blob.core.windows.net`. Se o painel também oferecer **SNI**, use o mesmo valor.
+3. **SSL/TLS**: modo **Full (strict)** (no domínio todo ou numa *Configuration Rule* só para esse hostname).
+4. **Rules → Transform Rules → Rewrite URL**: mesmo hostname, *Path* sem alteração, **Query → Rewrite to → Static**: cole o SAS (sem o `?`). Assim o SAS nunca chega ao navegador, e parâmetros inventados por visitantes são descartados e não furam o cache.
+5. **Rules → Transform Rules → Modify Response Header**: mesmo hostname, **Set** `Access-Control-Allow-Origin` = `https://eleicoes.seu-dominio` (o endereço do painel).
+6. **Caching → Cache Rules**: mesmo hostname, **Eligible for cache**. *Edge TTL*: "Use cache-control header if present". *Browser TTL*: "Respect origin". Opcional: TTL de 15 s para o status 404. Por padrão o Cloudflare não faz cache de `.json`, por isso essa regra é necessária.
+7. No `.env` do servidor: `DADOS_URL_PUBLICA=https://dados.eleicoes.seu-dominio/eleicoes/` (com o nome do container no fim).
+
+Cada arquivo é gravado no Blob com o seu `Cache-Control`, e o Cloudflare respeita esse valor:
+
+| Arquivos | Cache no Cloudflare |
+|---|---|
+| Apuração (`turno-*.json`, `gov-2.json`, `sup-hoje.json`, `projecao-2.json`) | 15 s (`CACHE_DADOS_S`) |
+| Índice do histórico | 60 s |
+| Eleições do histórico | 1 h |
+| Detalhamento por município do histórico | 1 dia |
+| Fotos | 7 dias |
+
+**Conferir:**
+```bash
+curl -sI https://dados.eleicoes.seu-dominio/eleicoes/turno-2.json | grep -iE "^HTTP|cf-cache-status|cache-control"
+# 200; na segunda chamada, cf-cache-status: HIT
+curl -sI https://eleicoesdados123.blob.core.windows.net/eleicoes/turno-2.json | head -1
+# 404 ou 409: o container não é público, o acesso direto não funciona
+```
+
+### Passo 2 (caminho 3): Cloudflare Worker
+
+Se o seu plano não tiver a reescrita do Host (passo 2 acima), use o Worker de [`cloudflare/worker.js`](cloudflare/worker.js):
+
+1. **Workers & Pages → Create → Worker**: cole o conteúdo do arquivo.
+2. **Settings → Variables**: `AZURE_STORAGE_ACCOUNT`, `AZURE_CONTAINER` (`eleicoes`), `ORIGEM_PERMITIDA` (`https://eleicoes.seu-dominio`) e, como **Secret**, `AZURE_SAS` (o SAS, sem o `?`).
+3. **Domains & Routes**: adicione o domínio `dados.eleicoes.seu-dominio`.
+4. No `.env`: `DADOS_URL_PUBLICA=https://dados.eleicoes.seu-dominio/` (sem o container no fim; o Worker já o acrescenta).
+
+O Worker faz cache no próprio Cloudflare e respeita o `Cache-Control` de cada arquivo. Ele roda em **toda** requisição, mesmo nas que vêm do cache. O plano gratuito permite 100 mil requisições por dia, o que basta fora de eleição. Em dia de apuração, com milhares de pessoas atualizando a cada 15 s, esse limite acaba em poucas horas, então use o plano pago do Workers ou o caminho 2.
+
+### Passo 2 (caminho 4): sem Cloudflare
+
+Deixe `DADOS_URL_PUBLICA` vazio. O navegador continua pedindo `/dados/...` ao servidor, que busca o arquivo no Blob e o repassa com o mesmo `Cache-Control`. Nada fica no container, mas o tráfego passa pelo servidor. Para aliviar, ponha cache no Nginx Proxy Manager:
+
+1. No servidor do NPM, crie `/data/nginx/custom/http_top.conf` com:
+   ```nginx
+   proxy_cache_path /data/nginx/cache/eleicoes levels=1:2 keys_zone=eleicoes:10m max_size=500m inactive=1h;
+   ```
+2. No proxy host do painel → **Advanced**:
+   ```nginx
+   location /dados/ {
+     proxy_pass http://apuracao-eleicoes:8080;
+     proxy_cache eleicoes;
+     proxy_cache_valid 200 15s;
+     proxy_cache_valid 404 15s;
+     proxy_cache_lock on;
+     proxy_cache_use_stale updating error timeout;
+     add_header X-Cache $upstream_cache_status;
+   }
+   ```
+
+Outra CDN também serve, desde que consiga acrescentar uma query string fixa (o SAS) às requisições para a origem e fazer cache respeitando o `Cache-Control`. A configuração segue a mesma lógica do caminho 2. Não recomendo tornar o container público: qualquer pessoa poderia chamar o Blob direto, fora do cache, e a conta de tráfego seria sua.
+
+### Passo 3: ligar no servidor
+
+Preencha no `.env` as linhas mostradas pelo script e o `DADOS_URL_PUBLICA`, e faça o redeploy. Na primeira subida, o servidor envia ao Blob o histórico embutido na imagem (cerca de 880 arquivos, uma vez só) e passa a gravar a apuração lá. No `/saude`, o card **💾 Armazenamento** mostra a conta, de onde o navegador lê, os envios pendentes, a última gravação e quantos dias faltam para o segredo vencer.
+
+- **Se o Azure ficar fora do ar**, a coleta continua, as gravações esperam numa fila com novas tentativas, e o `/saude` mostra os pendentes.
+- **Para voltar ao modo local**, apague as variáveis `AZURE_*` do `.env` e faça o redeploy.
+- **Para trocar o segredo**, gere um novo no Entra ID, atualize o `.env` e faça o redeploy. Depois apague o segredo antigo.
+- **Para revogar o SAS**, apague a política `leitura-cdn` do container e gere outra.
+
+**Testar sem conta no Azure:** `node tools/simular-azure.js 10099` sobe um simulador do Entra ID e do Blob. Rode o servidor com `AZURE_BLOB_ENDPOINT=http://127.0.0.1:10099 AZURE_AUTHORITY=http://127.0.0.1:10099 AZURE_STORAGE_ACCOUNT=teste AZURE_TENANT_ID=t AZURE_CLIENT_ID=c AZURE_CLIENT_SECRET=segredo-de-teste`.
 
 ## Publicar com Nginx Proxy Manager
 
@@ -269,6 +401,10 @@ server/historico.js job do histórico (baixa o que falta da base)
 server/historico-base/ eleições resumidas, embutidas na imagem
 tools/importar-dados-abertos.js gera a base a partir dos Dados Abertos do TSE
 server/server.js   servidor HTTP (site + snapshots + /saude)
+server/armazenamento.js onde os dados ficam: pasta local ou Azure Blob
+azure/             script e papel personalizado para criar o armazenamento no Azure
+cloudflare/worker.js alternativa às regras do Cloudflare para ler o Blob privado
+tools/simular-azure.js simulador do Azure Blob para testes, sem conta no Azure
 iniciar.ps1        roda tudo localmente com Node portátil
 ```
 

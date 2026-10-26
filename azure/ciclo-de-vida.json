@@ -1,0 +1,15 @@
+{
+  "rules": [
+    {
+      "enabled": true,
+      "name": "apaga-versoes-antigas",
+      "type": "Lifecycle",
+      "definition": {
+        "filters": { "blobTypes": ["blockBlob"] },
+        "actions": {
+          "version": { "delete": { "daysAfterCreationGreaterThan": 7 } }
+        }
+      }
+    }
+  ]
+}

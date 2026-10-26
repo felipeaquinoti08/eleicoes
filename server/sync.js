@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const BU = require('../public/bu.js');
 const projecao = require('./projecao');
+const armazenamento = require('./armazenamento');
 
 const BASE = 'https://resultados.tse.jus.br/oficial/ele2026';
 const TURNOS = {
@@ -12,7 +13,6 @@ const TURNOS = {
   2: { ele: 6258, pleito: 3221 },
 };
 const UFS = ["AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG","MS","MT","PA","PB","PE","PI","PR","RJ","RN","RO","RR","RS","SC","SE","SP","TO"];
-const DIR_DADOS = process.env.DIR_DADOS || path.join(__dirname, '..', 'dados');
 const CONCORRENCIA = +process.env.CONCORRENCIA || 4;
 
 const pad = (v, n) => String(v).padStart(n, '0');
@@ -74,35 +74,28 @@ function oficialDe(j) {
   };
 }
 
-function gravarJSON(arquivo, obj) {
-  const tmp = arquivo + '.tmp';
-  fs.mkdirSync(path.dirname(arquivo), { recursive: true }); // recria a pasta se ela tiver sido apagada por fora
-  fs.writeFileSync(tmp, JSON.stringify(obj));
-  fs.renameSync(tmp, arquivo); // troca atômica: o servidor nunca entrega arquivo pela metade
-}
+// grava na pasta local ou no Azure Blob (server/armazenamento.js); o nome é relativo à raiz dos dados
+const gravarJSON = (nome, obj) => armazenamento.gravarJSON(nome, obj);
 
 
 // cache de BUs já decodificados (sobrevive a reinícios do container)
 const caches = {};
 function cacheDo(pleito) {
   if (!caches[pleito]) {
-    const arq = path.join(DIR_DADOS, `cache-bu-${pleito}.json`);
-    try { caches[pleito] = JSON.parse(fs.readFileSync(arq, 'utf8')); } catch { caches[pleito] = {}; }
+    caches[pleito] = armazenamento.lerJSON(`cache-bu-${pleito}.json`) || {};
   }
   return caches[pleito];
 }
 
 // fotos dos candidatos: baixadas uma vez e servidas pelo próprio servidor (o TSE limita requisições)
 async function baixarFotos(n, T, candidatos) {
-  const dir = path.join(DIR_DADOS, 'fotos');
-  fs.mkdirSync(dir, { recursive: true });
   for (const c of candidatos) {
     if (!/^\d+$/.test(c.sq)) continue;
-    const arq = path.join(dir, `${c.sq}.jpeg`);
-    if (fs.existsSync(arq)) continue;
+    const arq = `fotos/${c.sq}.jpeg`;
+    if (armazenamento.existe(arq)) continue;
     try {
       const buf = Buffer.from(await (await baixar(`${BASE}/${T.ele}/fotos/br/${c.sq}.jpeg`, 4)).arrayBuffer());
-      fs.writeFileSync(arq, buf);
+      armazenamento.gravar(arq, buf);
     } catch (e) { log(`aviso foto ${c.nome}:`, e.message); }
   }
 }
@@ -112,8 +105,7 @@ async function baixarFotos(n, T, candidatos) {
 const estados = {};
 function estadoDo(n) {
   if (!estados[n]) {
-    let ant = {};
-    try { ant = JSON.parse(fs.readFileSync(path.join(DIR_DADOS, `turno-${n}.json`), "utf8")); } catch { ant = sementeDoHistorico(n) || {}; }
+    const ant = armazenamento.lerJSON(`turno-${n}.json`) || sementeDoHistorico(n) || {};
     estados[n] = { candidatos: ant.candidatos || [], ofExterior: ant.ofExterior || null, brasil: ant.brasil || null, ufs: ant.ufs || {}, cidades: ant.cidades || {}, situacao: ant.situacao || null, situacaoBR: ant.situacaoBR || {} };
     if (ant.semente) { log(`turno ${n}: sem dados gravados, começando pelo resultado do histórico embutido`); setImmediate(() => publicar(n)); }
   }
@@ -149,7 +141,7 @@ function sementeDoHistorico(n) {
 function publicar(n) {
   const T = TURNOS[n], e = estadoDo(n);
   if (!e.candidatos.length) return;
-  gravarJSON(path.join(DIR_DADOS, `turno-${n}.json`), { gerado: new Date().toISOString(), turno: n, ele: T.ele, pleito: T.pleito, ...e });
+  gravarJSON(`turno-${n}.json`, { gerado: new Date().toISOString(), turno: n, ele: T.ele, pleito: T.pleito, ...e });
 }
 
 const fotosEmAndamento = {};
@@ -261,7 +253,7 @@ async function sincronizarExterior(n) {
   // durante cargas grandes (centenas de BUs), publica parciais para o painel ir se populando
   let feitos = 0;
   const parcial = setInterval(() => {
-    try { publicar(n); gravarJSON(path.join(DIR_DADOS, `cache-bu-${T.pleito}.json`), cache); log(`turno ${n}: parcial ${feitos}/${fila.length} BUs novos`); }
+    try { publicar(n); gravarJSON(`cache-bu-${T.pleito}.json`, cache); log(`turno ${n}: parcial ${feitos}/${fila.length} BUs novos`); }
     catch (er) { log("aviso parcial:", er.message); }
   }, 20000);
   const errosBU = await emParalelo(fila, CONCORRENCIA, async it => {
@@ -277,7 +269,7 @@ async function sincronizarExterior(n) {
     it.c.bu[`${it.zona}-${it.ns}`] = r;
     feitos++;
   }).finally(() => clearInterval(parcial));
-  gravarJSON(path.join(DIR_DADOS, `cache-bu-${T.pleito}.json`), cache);
+  gravarJSON(`cache-bu-${T.pleito}.json`, cache);
 
   // totalização oficial por cidade: só depois que o TSE começar a divulgar o exterior
   let errosOf = 0;
@@ -300,7 +292,7 @@ async function sincronizarExterior(n) {
 const estadoMun = {};
 function estadoMunDo(n) {
   if (!estadoMun[n]) {
-    try { estadoMun[n] = JSON.parse(fs.readFileSync(path.join(DIR_DADOS, `cache-mun-${n}.json`), "utf8")); } catch { estadoMun[n] = {}; }
+    estadoMun[n] = armazenamento.lerJSON(`cache-mun-${n}.json`) || {};
   }
   return estadoMun[n];
 }
@@ -340,8 +332,8 @@ async function sincronizarMunicipios(n) {
       mun[it.cd] = { ...r, v: it.versao };
       baixados++;
     });
-    gravarJSON(path.join(DIR_DADOS, `turno-${n}-mun-${uf}.json`), { gerado: new Date().toISOString(), uf, municipios: mun });
-    gravarJSON(path.join(DIR_DADOS, `cache-mun-${n}.json`), est);
+    gravarJSON(`turno-${n}-mun-${uf}.json`, { gerado: new Date().toISOString(), uf, municipios: mun });
+    gravarJSON(`cache-mun-${n}.json`, est);
   }
   if (baixados || erros || velhos) log(`turno ${n}: municípios ${baixados} atualizados, ${velhos} ainda com cópia antiga do TSE (nova tentativa na próxima passada), ${erros} falhas em ${((Date.now() - inicio) / 1000).toFixed(0)}s`);
   const comDados = Object.values(est).reduce((a, m) => a + Object.keys(m).length, 0);
@@ -367,7 +359,7 @@ function atualizarProjecao() {
       mun1, mun2: estadoMunDo("2"), municipios: municipios(),
       bu1: cacheDo(TURNOS[1].pleito), bu2: cacheDo(TURNOS[2].pleito),
     });
-    gravarJSON(path.join(DIR_DADOS, "projecao-2.json"), r);
+    gravarJSON("projecao-2.json", r);
     marcar("2", "projecao", { ok: true, ultimoSucesso: r.gerado, disponivel: r.disponivel, pesoApurado: r.pesoApurado, erro: null });
   } catch (er) {
     marcar("2", "projecao", { ok: false, erro: er.message });
@@ -423,7 +415,6 @@ function agendar(n, minutos, fn, nome) {
 }
 
 function iniciar() {
-  fs.mkdirSync(DIR_DADOS, { recursive: true });
   const min = +process.env.SYNC_INTERVALO_MIN || 5;
   const turnos = (process.env.TURNOS || '2,1').split(',').map(s => s.trim()).filter(t => TURNOS[t]);
   const brasilMin = (+process.env.SYNC_BRASIL_S || 30) / 60;
@@ -437,12 +428,12 @@ function iniciar() {
   for (const t of (process.env.TURNOS_MUN || '2,1').split(',').map(s => s.trim()).filter(t => TURNOS[t])) loopMunicipios(t, t === '1' ? 60 : 1);
   // governador no 2º turno (só nos estados com 2º turno), no mesmo ritmo do Brasil
   if (process.env.GOVERNADOR !== '0' && turnos.includes('2')) {
-    const gov = require('./governador').criar({ getJSON, baixar, emParalelo, gravarJSON, log, DIR_DADOS, CONCORRENCIA });
+    const gov = require('./governador').criar({ getJSON, baixar, emParalelo, gravarJSON, log, armazenamento, CONCORRENCIA });
     agendar('2', brasilMin, () => gov.sincronizar(), 'governador');
   }
   // eleições suplementares do dia (prefeitos etc.), lidas da configuração do TSE
   if (process.env.SUPLEMENTARES !== '0') {
-    const sup = require('./suplementares').criar({ getJSON, baixar, gravarJSON, log, DIR_DADOS });
+    const sup = require('./suplementares').criar({ getJSON, baixar, gravarJSON, log, armazenamento });
     agendar('2', brasilMin, () => sup.sincronizar(), 'suplementares');
   }
   log(`sincronização ativa: turnos ${turnos.join(', ')}; Brasil a cada ${brasilMin * 60} s, exterior a cada ${min} min (1º turno a cada ${Math.max(min, 60)} min)`);
@@ -452,7 +443,6 @@ const sincronizarTurno = async n => { await sincronizarNacional(n); await sincro
 module.exports = { iniciar, sincronizarTurno, sincronizarMunicipios, status };
 if (require.main === module) {
   if (process.argv[2] === '--uma-vez') {
-    fs.mkdirSync(DIR_DADOS, { recursive: true });
-    Promise.all((process.argv[3] || '2').split(',').map(sincronizarTurno)).catch(e => { console.error(e); process.exit(1); });
-  } else iniciar();
+    armazenamento.iniciar().then(() => Promise.all((process.argv[3] || '2').split(',').map(sincronizarTurno))).catch(e => { console.error(e); process.exit(1); });
+  } else armazenamento.iniciar().then(iniciar);
 }

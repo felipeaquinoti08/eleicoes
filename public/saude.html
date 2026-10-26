@@ -102,6 +102,27 @@ function cartaoHistorico(h) {
     (h.erro ? `<div class="erro-txt">${esc(h.erro)}</div>` : '') + '</div>';
 }
 
+function cartaoArmazenamento(a) {
+  if (!a) return '';
+  if (a.modo !== 'azure') {
+    return `<div class="cartao"><h3><span class="bola ok"></span>💾 Armazenamento</h3><dl><dt>Onde</dt><dd>Pasta local do servidor</dd>` +
+      `<dt>Navegador lê de</dt><dd>${esc(a.dadosLidosEm)}</dd></dl></div>`;
+  }
+  const expira = a.segredoExpiraEmDias;
+  const estado = !a.iniciado || (a.ultimoErroEm && a.pendentes) ? 'erro' : a.pendentes > 50 || (expira !== null && expira <= 30) ? 'atencao' : 'ok';
+  const linhas = [
+    ['Onde', `Azure Blob · ${esc(a.conta)}`],
+    ['Navegador lê de', esc(a.dadosLidosEm)],
+    ['Arquivos', fmt(a.arquivos)],
+    ['Envios pendentes', fmt(a.pendentes)],
+    ['Última gravação', ha(a.ultimaGravacao)],
+    ['Gravações / falhas', `${fmt(a.gravados)} / ${fmt(a.falhas)}`],
+  ];
+  if (expira !== null) linhas.push(['Segredo do Azure', expira < 0 ? 'vencido' : `vence em ${fmt(expira)} dias`]);
+  return `<div class="cartao"><h3><span class="bola ${estado}"></span>💾 Armazenamento</h3><dl>${linhas.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>` +
+    (a.ultimoErro && a.pendentes ? `<div class="erro-txt">${esc(a.ultimoErro)}</div>` : '') + '</div>';
+}
+
 async function atualizar() {
   let s;
   try { s = await (await fetch('saude.json', { cache: 'no-store' })).json(); }
@@ -129,7 +150,8 @@ async function atualizar() {
       <dl><dt>2º turno</dt><dd>${ha(snap.turno2)}</dd><dt>1º turno</dt><dd>${ha(snap.turno1)}</dd><dt>Histórico</dt><dd>${ha(s.historico)}</dd></dl></div>
     <div class="cartao"><h3>🖥️ Servidor</h3>
       <dl><dt>Versão</dt><dd>${esc(s.versao)}</dd><dt>No ar desde</dt><dd>${ha(s.iniciadoEm)}</dd></dl></div>
-    ${cartaoHistorico(s.historicoStatus)}`;
+    ${cartaoHistorico(s.historicoStatus)}
+    ${cartaoArmazenamento(s.armazenamento)}`;
 
   $('turnos').innerHTML = coletas.sort().reverse().map(([t, c]) =>
     `<h2>${t === 'turno2' ? '2º turno' : '1º turno'}</h2><div class="grade">${Object.entries(c).map(([k, v]) => cartaoColeta(k, v)).join('')}</div>`).join('');

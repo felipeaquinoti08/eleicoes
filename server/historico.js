@@ -3,9 +3,11 @@
 // e as suplementares mais recentes) e grava dados/historico/<id>.json num formato único.
 const fs = require('fs');
 const path = require('path');
+const armazenamento = require('./armazenamento');
 
 const RAIZ = 'https://resultados.tse.jus.br/oficial';
-const DIR = path.join(process.env.DIR_DADOS || path.join(__dirname, '..', 'dados'), 'historico');
+// tudo o que é baixado ou gerado fica em historico/ (pasta local ou Azure Blob, via server/armazenamento.js)
+const P = 'historico/';
 const TOTAL = +process.env.HISTORICO_QTD || 20;
 const CONCORRENCIA = +process.env.HISTORICO_CONCORRENCIA || 2;
 const UFS = ['AC', 'AL', 'AM', 'AP', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MG', 'MS', 'MT', 'PA', 'PB', 'PE', 'PI', 'PR', 'RJ', 'RN', 'RO', 'RR', 'RS', 'SC', 'SE', 'SP', 'TO'];
@@ -120,8 +122,8 @@ function locaisDe(el) {
 }
 
 async function baixarEleicao(el) {
-  const arq = path.join(DIR, `${el.id}.json`);
-  try { if (JSON.parse(fs.readFileSync(arq, 'utf8')).completo) return 'cache'; } catch { /* baixa */ }
+  const arq = `${P}${el.id}.json`;
+  if ((await armazenamento.lerJSONAsync(arq))?.completo && armazenamento.info(arq)?.origem !== 'base') return 'cache';
   try { if (JSON.parse(fs.readFileSync(path.join(BASE_DIR, `${el.id}.json`), 'utf8')).completo) return 'base'; } catch { /* baixa */ }
   const locais = locaisDe(el);
   const cargos = [];
@@ -142,9 +144,7 @@ async function baixarEleicao(el) {
   // só fica "completo" (e deixa de ser baixado de novo) com a apuração encerrada em todos os locais
   const encerrada = cargos.every(c => c.locais.every(l => l.secTot > 0 && l.secRec >= l.secTot));
   const doc = { ...el, municipios: undefined, completo: falhas === 0 && encerrada, baixado: new Date().toISOString(), cargos };
-  fs.mkdirSync(DIR, { recursive: true });
-  fs.writeFileSync(arq + '.tmp', JSON.stringify(doc));
-  fs.renameSync(arq + '.tmp', arq);
+  armazenamento.gravarJSON(arq, doc);
   return falhas ? 'parcial' : 'ok';
 }
 
@@ -177,25 +177,23 @@ async function ordinariasDaConfiguracao() {
 
 // Detalhamento municipal a partir do que o painel coletou ao vivo (presidente e governador do 2º turno), para
 // eleições que já terminaram e ainda não têm o detalhe embutido (os Dados Abertos demoram a publicar).
-function exportarMunicipiosDoAoVivo() {
-  const DADOS = path.dirname(DIR);
+async function exportarMunicipiosDoAoVivo() {
   const ano = (process.env.CICLO_ATUAL || '2026');
   const tarefas = [
-    { id: `${ano}-2t-federal`, cd: 1, ler: () => JSON.parse(fs.readFileSync(path.join(DADOS, 'cache-mun-2.json'), 'utf8')), comum: true },
-    { id: `${ano}-1t-federal`, cd: 1, ler: () => JSON.parse(fs.readFileSync(path.join(DADOS, 'cache-mun-1.json'), 'utf8')), comum: true },
-    { id: `${ano}-2t-estadual`, cd: 3, ler: () => Object.fromEntries(Object.entries(JSON.parse(fs.readFileSync(path.join(DADOS, 'cache-gov-2.json'), 'utf8')).ufs || {}).map(([uf, e]) => [uf, e.municipios || {}])) },
+    { id: `${ano}-2t-federal`, cd: 1, ler: () => armazenamento.lerJSON('cache-mun-2.json') },
+    { id: `${ano}-1t-federal`, cd: 1, ler: () => armazenamento.lerJSON('cache-mun-1.json') },
+    { id: `${ano}-2t-estadual`, cd: 3, ler: () => { const g = armazenamento.lerJSON('cache-gov-2.json'); return g && Object.fromEntries(Object.entries(g.ufs || {}).map(([uf, e]) => [uf, e.municipios || {}])); } },
   ];
   let exportados = 0;
   for (const t of tarefas) {
-    let doc;
-    for (const dir of [DIR, BASE_DIR]) { try { doc = JSON.parse(fs.readFileSync(path.join(dir, `${t.id}.json`), 'utf8')); break; } catch { /* tenta a outra */ } }
+    let doc = await armazenamento.lerJSONAsync(`${P}${t.id}.json`);
+    if (!doc) { try { doc = JSON.parse(fs.readFileSync(path.join(BASE_DIR, `${t.id}.json`), 'utf8')); } catch { /* não existe */ } }
     if (!doc || !doc.completo) continue;
     const cargo = doc.cargos.find(c => c.cd === t.cd);
     if (!cargo) continue;
     if (fs.existsSync(path.join(BASE_DIR, 'mun', t.id, `${t.cd}-SP.json`)) || fs.existsSync(path.join(BASE_DIR, 'mun', t.id, `${t.cd}-DF.json`))) continue; // já embutido
-    let porUF;
-    try { porUF = t.ler(); } catch { continue; }
-    const saidaDir = path.join(DIR, 'mun', t.id);
+    const porUF = t.ler();
+    if (!porUF) continue;
     let n = 0;
     for (const [uf, muns] of Object.entries(porUF)) {
       const local = cargo.locais.find(l => l.uf === uf && !l.mun);
@@ -205,8 +203,7 @@ function exportarMunicipiosDoAoVivo() {
       const cands = local.cands.map(c => ({ n: c.n, nome: c.nome, partido: c.partido }));
       const mun = {};
       for (const [cd, m] of Object.entries(muns)) mun[cd] = { v: cands.map(c => m.votos?.[c.n] || 0), c: m.comp, a: m.aptos, b: m.brancos, nu: m.nulos, s: m.secTot };
-      fs.mkdirSync(saidaDir, { recursive: true });
-      fs.writeFileSync(path.join(saidaDir, `${t.cd}-${uf}.json`), JSON.stringify({ cargo: t.cd, uf, cands, mun, fonte: 'coleta ao vivo do painel' }));
+      armazenamento.gravarJSON(`${P}mun/${t.id}/${t.cd}-${uf}.json`, { cargo: t.cd, uf, cands, mun, fonte: 'coleta ao vivo do painel' });
       n++;
     }
     if (n) exportados += n;
@@ -217,17 +214,18 @@ function exportarMunicipiosDoAoVivo() {
 // cargos com detalhamento municipal disponível (embutido ou exportado) para um documento
 function cargosComMunicipios(id) {
   const cds = new Set();
-  for (const dir of [path.join(BASE_DIR, 'mun', id), path.join(DIR, 'mun', id)]) {
-    try { for (const n of fs.readdirSync(dir)) { const m = /^(\d+)-[A-Z]{2}\.json$/.exec(n); if (m) cds.add(+m[1]); } } catch { /* sem detalhe */ }
-  }
+  let embutidos = [];
+  try { embutidos = fs.readdirSync(path.join(BASE_DIR, 'mun', id)); } catch { /* sem detalhe embutido */ }
+  const gerados = armazenamento.listar(`${P}mun/${id}/`).map(n => n.slice(n.lastIndexOf('/') + 1));
+  for (const n of [...embutidos, ...gerados]) { const m = /^(\d+)-[A-Z]{2}\.json$/.exec(n); if (m) cds.add(+m[1]); }
   return [...cds];
 }
 
 // estado do histórico, mostrado no /saude
-const statusHistorico = { ultimaPassada: null, proxima: null, novasNaUltimaPassada: [], pendentes: [], erro: null };
+const statusHistorico = { ultimaPassada: null, proxima: null, novasNaUltimaPassada: [], pendentes: [], erro: null, baseEnviada: null };
+let ultimoIndice = null;
 function status() {
-  let indice = null;
-  try { indice = JSON.parse(fs.readFileSync(path.join(DIR, 'indice.json'), 'utf8')); } catch { /* ainda não existe */ }
+  const indice = ultimoIndice;
   const lista = indice?.eleicoes || [];
   const ordinarias = lista.filter(e => !e.suplementar);
   const grupos = [...new Set(ordinarias.map(e => e.grupoNome))];
@@ -271,14 +269,18 @@ function grupoDe(doc) {
 }
 
 // índice com tudo o que existe: a base embutida e o que foi baixado (o baixado vence quando os dois existem)
-function montarIndice() {
+const docsLidos = new Map(); // nome -> { em, doc }: não relê do Blob o que não mudou
+async function montarIndice() {
   const docs = new Map();
-  for (const dir of [BASE_DIR, DIR]) {
-    let nomes = [];
-    try { nomes = fs.readdirSync(dir).filter(n => n.endsWith('.json') && n !== 'indice.json'); } catch { continue; }
-    for (const n of nomes) {
-      try { const d = JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')); docs.set(d.id, d); } catch { /* ignora */ }
-    }
+  for (const n of fs.readdirSync(BASE_DIR).filter(n => n.endsWith('.json'))) {
+    try { const d = JSON.parse(fs.readFileSync(path.join(BASE_DIR, n), 'utf8')); docs.set(d.id, d); } catch { /* ignora */ }
+  }
+  for (const nome of armazenamento.listar(P).filter(n => /^historico\/[^/]+\.json$/.test(n) && n !== `${P}indice.json`)) {
+    if (armazenamento.info(nome)?.origem === 'base') continue; // cópia da base, já lida acima
+    const em = armazenamento.quando(nome);
+    let d = docsLidos.get(nome)?.em === em ? docsLidos.get(nome).doc : null;
+    if (!d) { d = await armazenamento.lerJSONAsync(nome); if (d) docsLidos.set(nome, { em, doc: d }); }
+    if (d?.id) docs.set(d.id, d);
   }
   let sup = 0;
   const lista = [...docs.values()].sort((a, b) => b.data.localeCompare(a.data) || b.id.localeCompare(a.id))
@@ -288,15 +290,35 @@ function montarIndice() {
       fonte: d.fonte || 'Sistema de resultados do TSE', cargos: d.cargos.map(c => ({ cd: c.cd, nome: c.nome })), ...grupoDe(d),
       municipais: cargosComMunicipios(d.id), // cargos com detalhamento por município
     }));
-  fs.mkdirSync(DIR, { recursive: true });
-  const arq = path.join(DIR, 'indice.json');
-  fs.writeFileSync(arq + '.tmp', JSON.stringify({ gerado: new Date().toISOString(), eleicoes: lista }));
-  fs.renameSync(arq + '.tmp', arq);
+  ultimoIndice = { gerado: new Date().toISOString(), eleicoes: lista };
+  armazenamento.gravarJSON(`${P}indice.json`, ultimoIndice);
   return lista;
 }
 
+// No Azure Blob o navegador lê tudo de lá, então a base embutida na imagem também é enviada. Vai só o que falta ou
+// o que mudou numa imagem nova; um documento que o servidor baixou do TSE (sem a marca de origem) não é sobrescrito.
+function publicarBase() {
+  if (armazenamento.MODO !== 'azure') return 0;
+  let n = 0;
+  const andar = rel => {
+    for (const d of fs.readdirSync(path.join(BASE_DIR, rel), { withFileTypes: true })) {
+      const r = rel ? `${rel}/${d.name}` : d.name;
+      if (d.isDirectory()) { andar(r); continue; }
+      if (!d.name.endsWith('.json')) continue;
+      const nome = `${P}${r}`, atual = armazenamento.info(nome);
+      if (atual && atual.origem !== 'base') continue;
+      const buf = fs.readFileSync(path.join(BASE_DIR, r));
+      if (atual && atual.md5 === armazenamento.md5(buf)) continue;
+      armazenamento.gravar(nome, buf, 'base');
+      n++;
+    }
+  };
+  andar('');
+  statusHistorico.baseEnviada = { em: new Date().toISOString(), arquivos: n };
+  return n;
+}
+
 async function sincronizarHistorico() {
-  fs.mkdirSync(DIR, { recursive: true });
   // lista fixa + o que a configuração do TSE tiver de novo
   const ordinarias = new Map(ORDINARIAS.map(el => [el.id, el]));
   try { for (const el of await ordinariasDaConfiguracao()) if (!ordinarias.has(el.id)) ordinarias.set(el.id, el); }
@@ -306,7 +328,8 @@ async function sincronizarHistorico() {
     const st = await baixarEleicao(el);
     if (st === 'indisponivel') log(`${el.nome}: não disponível no TSE`);
     else if (st !== 'cache' && st !== 'base') { log(`${el.nome}: ${st}`); novas.push(el.nome); }
-    try { if (!JSON.parse(fs.readFileSync(path.join(DIR, `${el.id}.json`), 'utf8')).completo) pendentes.push(el.nome); } catch { /* na base ou indisponível */ }
+    const baixado = armazenamento.info(`${P}${el.id}.json`)?.origem === 'base' ? null : await armazenamento.lerJSONAsync(`${P}${el.id}.json`);
+    if (baixado && !baixado.completo) pendentes.push(el.nome);
   }
   Object.assign(statusHistorico, { novasNaUltimaPassada: novas, pendentes });
   let sup = [];
@@ -316,14 +339,15 @@ async function sincronizarHistorico() {
     const st = await baixarEleicao(el);
     if (st !== 'cache' && st !== 'base' && st !== 'indisponivel') log(`${el.nome}: ${st}`);
   }
-  try { const n = exportarMunicipiosDoAoVivo(); if (n) log(`detalhamento municipal exportado da coleta ao vivo: ${n} arquivos`); } catch (e) { log('aviso exportação municipal:', e.message); }
-  const lista = montarIndice();
+  try { const n = await exportarMunicipiosDoAoVivo(); if (n) log(`detalhamento municipal exportado da coleta ao vivo: ${n} arquivos`); } catch (e) { log('aviso exportação municipal:', e.message); }
+  const lista = await montarIndice();
   log(`índice com ${lista.length} eleições (${lista.filter(e => !e.suplementar).length} ordinárias, ${lista.filter(e => e.suplementar).length} suplementares)`);
 }
 
 function iniciarHistorico() {
   // o índice sai na hora com a base embutida e o que já foi baixado; os downloads vêm depois
-  try { const l = montarIndice(); log(`índice inicial com ${l.length} eleições`); } catch (e) { log('erro no índice inicial:', e.message); }
+  try { const n = publicarBase(); if (n) log(`base embutida enviada ao Azure Blob: ${n} arquivos`); } catch (e) { log('erro ao enviar a base:', e.message); }
+  montarIndice().then(l => log(`índice inicial com ${l.length} eleições`)).catch(e => log('erro no índice inicial:', e.message));
   const INTERVALO = 6 * 60 * 60 * 1000;
   const rodar = async () => {
     try { await sincronizarHistorico(); statusHistorico.erro = null; }
@@ -337,4 +361,4 @@ function iniciarHistorico() {
 }
 
 module.exports = { iniciarHistorico, sincronizarHistorico, status, exportarMunicipiosDoAoVivo, montarIndice };
-if (require.main === module) sincronizarHistorico();
+if (require.main === module) armazenamento.iniciar().then(sincronizarHistorico);

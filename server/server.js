@@ -8,23 +8,26 @@ const zlib = require('zlib');
 const crypto = require('crypto');
 const sync = require('./sync');
 const historico = require('./historico');
+const armazenamento = require('./armazenamento');
 
 const PORTA = +process.env.PORTA || 8080;
 const DIR_PUBLIC = path.join(__dirname, '..', 'public');
 const DIR_DADOS = process.env.DIR_DADOS || path.join(__dirname, '..', 'dados');
 const CACHE_DADOS_S = +process.env.CACHE_DADOS_S || 15;
+// endereço público dos dados (CDN na frente do Azure Blob, por exemplo); vazio = o próprio servidor entrega em /dados/
+const DADOS_URL = (process.env.DADOS_URL_PUBLICA || '').trim().replace(/\/*$/, '/').replace(/^\/$/, '');
 
 // A pasta de dados pode ser uma pasta do servidor montada no container (./dados), criada pelo Docker como root.
 // Se o processo começa como root, acerta o dono da pasta e passa a rodar como o usuário "node" (uid 1000).
 function prepararPastaDados() {
-  fs.mkdirSync(DIR_DADOS, { recursive: true });
+  if (armazenamento.MODO === 'local') fs.mkdirSync(DIR_DADOS, { recursive: true }); // no Azure nada é gravado no container
   if (typeof process.getuid !== 'function' || process.getuid() !== 0) return;
   const UID = +process.env.APP_UID || 1000, GID = +process.env.APP_GID || 1000;
   const acertar = p => {
     try { fs.lchownSync(p, UID, GID); } catch { /* segue */ }
     if (fs.lstatSync(p).isDirectory()) for (const n of fs.readdirSync(p)) acertar(path.join(p, n));
   };
-  acertar(DIR_DADOS);
+  if (armazenamento.MODO === 'local') acertar(DIR_DADOS);
   process.setgid(GID);
   process.setuid(UID);
 }
@@ -33,11 +36,11 @@ prepararPastaDados();
 // Ao subir, os resultados já gravados são servidos na hora; o ciclo de coleta só atualiza por cima.
 function resumoDadosExistentes() {
   const itens = [];
-  for (const nome of ['turno-2.json', 'turno-1.json', 'projecao-2.json', path.join('historico', 'indice.json')]) {
-    try { itens.push(`${nome} (${fs.statSync(path.join(DIR_DADOS, nome)).mtime.toISOString()})`); } catch { /* ainda não existe */ }
+  for (const nome of ['turno-2.json', 'turno-1.json', 'projecao-2.json', 'historico/indice.json']) {
+    const em = armazenamento.quando(nome);
+    if (em) itens.push(`${nome} (${em})`);
   }
-  let mun = 0;
-  try { mun = fs.readdirSync(DIR_DADOS).filter(n => /^turno-\d-mun-/.test(n)).length; } catch { /* vazio */ }
+  const mun = armazenamento.listar('turno-').filter(n => /^turno-\d-mun-/.test(n)).length;
   return itens.length
     ? `servindo dados já gravados imediatamente: ${itens.join(', ')}, ${mun} arquivos de municípios`
     : 'pasta de dados vazia: os resultados aparecem após o primeiro ciclo de coleta';
@@ -67,7 +70,7 @@ const VERSAO = calcularVersao();
 function versionarHTML(html) {
   return html
     .replace(/(<(?:script|link)\b[^>]*\b(?:src|href)=")(?!https?:|\/\/)([^"?#]+\.(?:js|css))"/g, `$1$2?v=${VERSAO}"`)
-    .replace('<head>', `<head>\n  <script>window.VERSAO_APP = '${VERSAO}';</script>`);
+    .replace('<head>', `<head>\n  <script>window.VERSAO_APP = '${VERSAO}'; window.DADOS_BASE = ${JSON.stringify(DADOS_URL || 'dados/')};</script>`);
 }
 
 const INICIO = new Date().toISOString();
@@ -145,19 +148,21 @@ const servidor = http.createServer((req, res) => {
     }
     // ok continua true mesmo com coleta atrasada: o painel usa esse campo só para saber que há servidor
     const snapshots = {};
-    for (const t of [1, 2]) {
-      try { snapshots['turno' + t] = fs.statSync(path.join(DIR_DADOS, `turno-${t}.json`)).mtime; } catch { snapshots['turno' + t] = null; }
-    }
-    let hist = null;
-    try { hist = fs.statSync(path.join(DIR_DADOS, 'historico', 'indice.json')).mtime; } catch { /* ainda não baixou */ }
+    for (const t of [1, 2]) snapshots['turno' + t] = armazenamento.quando(`turno-${t}.json`);
+    const hist = armazenamento.quando('historico/indice.json');
     const online = contarOnline();
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     return res.end(JSON.stringify({
       ok: true, agora: new Date().toISOString(), versao: VERSAO, iniciadoEm: INICIO,
       visitantes: { online, picoHoje: picoOnline.valor, picoEm: picoOnline.em },
       snapshots, historico: hist, historicoStatus: historico.status(), coletas: sync.status(),
+      armazenamento: { ...armazenamento.status(), dadosLidosEm: DADOS_URL || '/dados/ (este servidor)' },
     }, null, 2));
   }
+
+  // Azure Blob: os dados não estão no container. Com CDN configurada, redireciona para ela (páginas antigas em cache
+  // ainda pedem /dados/); sem CDN, o servidor repassa o arquivo do container público.
+  if (armazenamento.MODO === 'azure' && caminhoUrl.startsWith('/dados/')) return servirDoBlob(req, res, caminhoUrl);
 
   const r = resolver(req.url);
   if (!r) { res.writeHead(400); return res.end(); }
@@ -186,8 +191,34 @@ const servidor = http.createServer((req, res) => {
   });
 });
 
-servidor.listen(PORTA, () => {
-  console.log(`painel em http://0.0.0.0:${PORTA}/ (dados em ${DIR_DADOS})`);
+async function servirDoBlob(req, res, caminhoUrl) {
+  let nome;
+  try { nome = decodeURIComponent(caminhoUrl.slice('/dados/'.length)); } catch { nome = ''; }
+  if (!/^[a-z0-9][a-z0-9_-]*(\/[a-z0-9][a-z0-9_-]*)*\.(json|jpeg)$/i.test(nome) || /^cache-/.test(nome)) { res.writeHead(404, { 'Cache-Control': 'no-store' }); return res.end(); }
+  if (DADOS_URL) { res.writeHead(302, { Location: DADOS_URL + nome, 'Cache-Control': 'public, max-age=300' }); return res.end(); }
+  try {
+    let a = await armazenamento.abrirPublico(nome);
+    // envio da base embutida ainda na fila: entrega a cópia da imagem
+    if (!a && nome.startsWith('historico/')) {
+      const arq = path.join(__dirname, 'historico-base', nome.slice('historico/'.length));
+      if (arq.startsWith(path.join(__dirname, 'historico-base') + path.sep) && fs.existsSync(arq)) a = { corpo: fs.readFileSync(arq), tipo: TIPOS['.json'], cache: armazenamento.cacheDe(nome) };
+    }
+    if (!a) { res.writeHead(404, { 'Cache-Control': 'no-store' }); return res.end(); }
+    const cab = { 'Content-Type': a.tipo, 'Cache-Control': a.cache, 'Vary': 'Accept-Encoding' };
+    let corpo = a.corpo;
+    if (/\bgzip\b/.test(req.headers['accept-encoding'] || '') && !nome.endsWith('.jpeg') && corpo.length > 1024) { cab['Content-Encoding'] = 'gzip'; corpo = zlib.gzipSync(corpo); }
+    cab['Content-Length'] = corpo.length;
+    res.writeHead(200, cab);
+    res.end(req.method === 'HEAD' ? undefined : corpo);
+  } catch (e) {
+    console.error('[armazenamento] leitura:', e.message);
+    res.writeHead(502, { 'Cache-Control': 'no-store' }); res.end();
+  }
+}
+
+servidor.listen(PORTA, async () => {
+  console.log(`painel em http://0.0.0.0:${PORTA}/ (dados: ${armazenamento.MODO === 'azure' ? 'Azure Blob' : DIR_DADOS}${DADOS_URL ? `, lidos pelo navegador em ${DADOS_URL}` : ''})`);
+  await armazenamento.iniciar();
   console.log(resumoDadosExistentes());
   if (process.env.SYNC !== '0') sync.iniciar();
   if (process.env.HISTORICO !== '0') historico.iniciarHistorico();

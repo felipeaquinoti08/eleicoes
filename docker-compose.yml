@@ -12,7 +12,17 @@ services:
       TURNOS_MUN: "2,1"         # turnos com resultado por município
       CACHE_DADOS_S: "15"       # cache dos snapshots no Cloudflare/navegador (segundos)
       CONCORRENCIA: "4"         # downloads simultâneos ao TSE (menos = menos risco de bloqueio 429)
+      # Azure Blob (opcional): os valores vêm do .env, que nunca vai para o Git. Vazios = pasta local (volume abaixo).
+      AZURE_STORAGE_ACCOUNT: ${AZURE_STORAGE_ACCOUNT:-}
+      AZURE_CONTAINER_PUBLICO: ${AZURE_CONTAINER_PUBLICO:-eleicoes}
+      AZURE_CONTAINER_INTERNO: ${AZURE_CONTAINER_INTERNO:-eleicoes-interno}
+      AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
+      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
+      AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
+      AZURE_CLIENT_SECRET_EXPIRA: ${AZURE_CLIENT_SECRET_EXPIRA:-}
+      DADOS_URL_PUBLICA: ${DADOS_URL_PUBLICA:-}   # de onde o navegador lê os dados (CDN); vazio = /dados/ deste servidor
     volumes:
+      # Com Azure Blob configurado, nada é gravado aqui e o volume fica vazio.
       # Padrão: volume nomeado "<projeto>_dados" (com -p eleicoes, "eleicoes_dados"), que sobrevive a rebuild e redeploy.
       # Para guardar numa pasta do servidor, defina DADOS no .env com um caminho ABSOLUTO fora da pasta do projeto
       # (ferramentas de deploy costumam recriar a pasta do projeto e apagariam os dados).

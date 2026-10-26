@@ -1,6 +1,8 @@
 'use strict';
 // Página de histórico: lê dados/historico/indice.json e o arquivo de cada eleição (gerados por server/historico.js).
 
+// onde ficam os dados publicados pelo servidor: /dados/ ou uma CDN (window.DADOS_BASE é injetado pelo servidor no HTML)
+const DADOS = window.DADOS_BASE || 'dados/';
 const UF_NOMES = {
   AC: 'Acre', AL: 'Alagoas', AM: 'Amazonas', AP: 'Amapá', BA: 'Bahia', CE: 'Ceará', DF: 'Distrito Federal',
   ES: 'Espírito Santo', GO: 'Goiás', MA: 'Maranhão', MG: 'Minas Gerais', MS: 'Mato Grosso do Sul', MT: 'Mato Grosso',
@@ -54,7 +56,7 @@ async function carregarDetalhe(uf) {
   if (!cargo?.temMun || !uf) return null;
   const chave = `${cargo.docId}/${cargo.cd}-${uf}`;
   if (!detalhes.has(chave)) {
-    detalhes.set(chave, fetch(`dados/historico/mun/${chave}.json`).then(r => (r.ok ? r.json() : null)).catch(() => null));
+    detalhes.set(chave, fetch(`${DADOS}historico/mun/${chave}.json`).then(r => (r.ok ? r.json() : null)).catch(() => null));
   }
   return detalhes.get(chave);
 }
@@ -330,7 +332,7 @@ function renderLista() {
 }
 
 async function carregarDocs(ids) {
-  const docs = await Promise.all(ids.map(async id => (await fetch(`dados/historico/${id}.json`)).json()));
+  const docs = await Promise.all(ids.map(async id => (await fetch(`${DADOS}historico/${id}.json`)).json()));
   return docs;
 }
 
@@ -388,7 +390,7 @@ function atualizarEndereco() {
 }
 
 async function iniciar() {
-  const r = await fetch('dados/historico/indice.json', { cache: 'no-cache' });
+  const r = await fetch(DADOS + 'historico/indice.json', { cache: 'no-cache' });
   if (!r.ok) {
     $('listaEleicoes').innerHTML = '<p class="vazio-hist">O histórico ainda está sendo preparado pelo servidor. Tente de novo em alguns minutos.</p>';
     return;

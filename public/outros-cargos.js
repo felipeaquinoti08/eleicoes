@@ -10,7 +10,7 @@ let estadual1T = null, estadual1TCarregando = null, estadual1TFalhouEm = 0;
 function carregarEstadual1T() {
   if (estadual1T || estadual1TCarregando || !modoServidor) return;
   if (Date.now() - estadual1TFalhouEm < 5 * 60 * 1000) return;
-  estadual1TCarregando = fetch(`dados/historico/${ID_ESTADUAL_1T}.json`, { cache: 'no-cache' })
+  estadual1TCarregando = fetch(`${DADOS}historico/${ID_ESTADUAL_1T}.json`, { cache: 'no-cache' })
     .then(r => (r.ok ? r.json() : Promise.reject(new Error(r.status))))
     .then(j => { estadual1T = j; render(); })
     .catch(() => { estadual1TFalhouEm = Date.now(); })

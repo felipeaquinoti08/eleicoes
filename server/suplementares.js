@@ -1,13 +1,11 @@
 'use strict';
 // Eleições suplementares do dia (prefeito, vereador ou governador fora de época), lidas da configuração do TSE.
 // Publica dados/sup-hoje.json com os candidatos e o resultado de cada uma, atualizado a cada passada.
-const fs = require('fs');
-const path = require('path');
 
 const RAIZ = 'https://resultados.tse.jus.br/oficial';
 const NOME_CARGO = { 3: 'Governador', 11: 'Prefeito', 13: 'Vereador' };
 
-function criar({ getJSON, baixar, gravarJSON, log, DIR_DADOS }) {
+function criar({ getJSON, baixar, gravarJSON, log, armazenamento }) {
   const pad = (v, n) => String(v).padStart(n, '0');
   let lista = null, listaDia = '';
   const estado = {}; // chave -> { hora, ... }
@@ -52,13 +50,11 @@ function criar({ getJSON, baixar, gravarJSON, log, DIR_DADOS }) {
   };
 
   async function baixarFotos(s, cands) {
-    const dir = path.join(DIR_DADOS, 'fotos');
-    fs.mkdirSync(dir, { recursive: true });
     for (const c of cands) {
-      const arq = path.join(dir, `${c.sq}.jpeg`);
-      if (!/^\d+$/.test(c.sq) || fs.existsSync(arq)) continue;
+      const arq = `fotos/${c.sq}.jpeg`;
+      if (!/^\d+$/.test(c.sq) || armazenamento.existe(arq)) continue;
       for (const pasta of [s.uf.toLowerCase(), 'br']) {
-        try { fs.writeFileSync(arq, Buffer.from(await (await baixar(`${RAIZ}/${s.ciclo}/${s.ele}/fotos/${pasta}/${c.sq}.jpeg`, 3)).arrayBuffer())); break; }
+        try { armazenamento.gravar(arq, Buffer.from(await (await baixar(`${RAIZ}/${s.ciclo}/${s.ele}/fotos/${pasta}/${c.sq}.jpeg`, 3)).arrayBuffer())); break; }
         catch { /* tenta a outra pasta */ }
       }
     }
@@ -67,7 +63,7 @@ function criar({ getJSON, baixar, gravarJSON, log, DIR_DADOS }) {
   async function sincronizar() {
     const sups = await descobrir();
     if (!sups.length) {
-      if (!fs.existsSync(path.join(DIR_DADOS, 'sup-hoje.json'))) gravarJSON(path.join(DIR_DADOS, 'sup-hoje.json'), { gerado: new Date().toISOString(), eleicoes: [] });
+      if (!armazenamento.existe('sup-hoje.json')) gravarJSON('sup-hoje.json', { gerado: new Date().toISOString(), eleicoes: [] });
       return { eleicoesHoje: 0, semNovidade: true };
     }
     let mudou = false, falhas = 0;
@@ -93,8 +89,8 @@ function criar({ getJSON, baixar, gravarJSON, log, DIR_DADOS }) {
       mudou = true;
       baixarFotos(s, cands).catch(() => {});
     }
-    if (mudou || !fs.existsSync(path.join(DIR_DADOS, 'sup-hoje.json'))) {
-      gravarJSON(path.join(DIR_DADOS, 'sup-hoje.json'), { gerado: new Date().toISOString(), eleicoes: Object.values(estado) });
+    if (mudou || !armazenamento.existe('sup-hoje.json')) {
+      gravarJSON('sup-hoje.json', { gerado: new Date().toISOString(), eleicoes: Object.values(estado) });
     }
     return { eleicoesHoje: sups.length, semNovidade: !mudou, falhas };
   }

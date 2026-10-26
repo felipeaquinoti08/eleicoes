@@ -1,0 +1,14 @@
+{
+  "Name": "Eleicoes Gravador Blob",
+  "IsCustom": true,
+  "Description": "Apuração de Eleições: lê, cria e sobrescreve blobs. Não apaga nada, não lista contas nem mexe em configuração.",
+  "Actions": [],
+  "NotActions": [],
+  "DataActions": [
+    "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read",
+    "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/write",
+    "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/add/action"
+  ],
+  "NotDataActions": [],
+  "AssignableScopes": ["/subscriptions/SUBSCRIPTION_ID"]
+}
