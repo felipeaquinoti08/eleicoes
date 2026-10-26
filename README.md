@@ -270,21 +270,23 @@ O script cria a storage account (privada, só HTTPS e TLS 1.2+), a lixeira, o ve
 
 ### Passo 2 (caminho 2): regras do Cloudflare
 
-Funciona no plano **Free**. O plano Free não deixa reescrever o Host na Origin Rule, então quem passa a aceitar o seu subdomínio é o Azure, com o **domínio personalizado** da storage account. Exemplo com o subdomínio `dados.eleicoes.seu-dominio` e a conta `eleicoesdados123`:
+Funciona no plano **Free**. O plano Free não deixa reescrever o Host na Origin Rule, então quem passa a aceitar o seu subdomínio é o Azure, com o **domínio personalizado** da storage account. Exemplo com o subdomínio `dados-eleicoes.seu-dominio` e a conta `eleicoesdados123`:
+
+> **Use um subdomínio de um nível só** (`dados-eleicoes.seu-dominio`, e não `dados.eleicoes.seu-dominio`). O certificado grátis do Cloudflare cobre só `*.seu-dominio`. Com dois níveis, o HTTPS falha no handshake, a menos que você contrate o Advanced Certificate Manager.
 
 1. **DNS no Cloudflare**, dois registros `CNAME`:
-   - `asverify.dados.eleicoes` → `asverify.eleicoesdados123.blob.core.windows.net`, **sem proxy** (nuvem cinza). Serve só para o Azure validar o domínio.
-   - `dados.eleicoes` → `eleicoesdados123.blob.core.windows.net`, **com proxy** (nuvem laranja).
+   - `asverify.dados-eleicoes` → `asverify.eleicoesdados123.blob.core.windows.net`, **sem proxy** (nuvem cinza). Serve só para o Azure validar o domínio.
+   - `dados-eleicoes` → `eleicoesdados123.blob.core.windows.net`, **com proxy** (nuvem laranja).
 2. **Domínio personalizado no Azure** (depois que o DNS propagar):
    ```bash
-   az storage account update -g rg-eleicoes -n eleicoesdados123 --custom-domain dados.eleicoes.seu-dominio --use-subdomain true
+   az storage account update -g rg-eleicoes -n eleicoesdados123 --custom-domain dados-eleicoes.seu-dominio --use-subdomain true
    ```
    Pelo portal: storage account → *Rede* → *Domínio personalizado*, marcando **Usar validação CNAME indireta**.
-3. **Rules → Configuration Rules**: quando *Hostname equals* `dados.eleicoes.seu-dominio`, **SSL → Full**. Tem que ser *Full*, não *Full (strict)*: o Azure responde com o certificado `*.blob.core.windows.net`, que não tem o nome do seu subdomínio. A conexão Cloudflare → Azure continua criptografada. Só a conferência do nome no certificado fica de fora, e só para esse subdomínio.
+3. **Rules → Configuration Rules**: quando *Hostname equals* `dados-eleicoes.seu-dominio`, **SSL → Full**. Tem que ser *Full*, não *Full (strict)*: o Azure responde com o certificado `*.blob.core.windows.net`, que não tem o nome do seu subdomínio. A conexão Cloudflare → Azure continua criptografada. Só a conferência do nome no certificado fica de fora, e só para esse subdomínio.
 4. **Rules → Transform Rules → Rewrite URL**: mesmo hostname, *Path* sem alteração, **Query → Rewrite to → Static**: cole o SAS (sem o `?`). Assim o SAS nunca chega ao navegador, e parâmetros inventados por visitantes são descartados e não furam o cache.
 5. **Rules → Transform Rules → Modify Response Header**: mesmo hostname, **Set** `Access-Control-Allow-Origin` = `https://eleicoes.seu-dominio` (o endereço do painel).
 6. **Caching → Cache Rules**: mesmo hostname, **Eligible for cache**. *Edge TTL*: "Use cache-control header if present". *Browser TTL*: "Respect origin". Opcional: TTL de 15 s para o status 404. Por padrão o Cloudflare não faz cache de `.json`, por isso essa regra é necessária.
-7. No `.env` do servidor: `DADOS_URL_PUBLICA=https://dados.eleicoes.seu-dominio/eleicoes/` (com o nome do container no fim).
+7. No `.env` do servidor: `DADOS_URL_PUBLICA=https://dados-eleicoes.seu-dominio/eleicoes/` (com o nome do container no fim).
 
 Não é preciso criar nenhuma Origin Rule. Em planos pagos, que permitem reescrever o Host e o SNI, dá para trocar os passos 1 a 3 por uma Origin Rule (Host e SNI = `eleicoesdados123.blob.core.windows.net`) com SSL *Full (strict)*.
 
@@ -300,7 +302,7 @@ Cada arquivo é gravado no Blob com o seu `Cache-Control`, e o Cloudflare respei
 
 **Conferir:**
 ```bash
-curl -sI https://dados.eleicoes.seu-dominio/eleicoes/turno-2.json | grep -iE "^HTTP|cf-cache-status|cache-control"
+curl -sI https://dados-eleicoes.seu-dominio/eleicoes/turno-2.json | grep -iE "^HTTP|cf-cache-status|cache-control"
 # 200; na segunda chamada, cf-cache-status: HIT
 curl -sI https://eleicoesdados123.blob.core.windows.net/eleicoes/turno-2.json | head -1
 # 404 ou 409: o container não é público, o acesso direto não funciona
@@ -312,8 +314,8 @@ Se não puder usar domínio personalizado na storage account, ou se quiser SSL *
 
 1. **Workers & Pages → Create → Worker**: cole o conteúdo do arquivo.
 2. **Settings → Variables**: `AZURE_STORAGE_ACCOUNT`, `AZURE_CONTAINER` (`eleicoes`), `ORIGEM_PERMITIDA` (`https://eleicoes.seu-dominio`) e, como **Secret**, `AZURE_SAS` (o SAS, sem o `?`).
-3. **Domains & Routes**: adicione o domínio `dados.eleicoes.seu-dominio`.
-4. No `.env`: `DADOS_URL_PUBLICA=https://dados.eleicoes.seu-dominio/` (sem o container no fim; o Worker já o acrescenta).
+3. **Domains & Routes**: adicione o domínio `dados-eleicoes.seu-dominio`.
+4. No `.env`: `DADOS_URL_PUBLICA=https://dados-eleicoes.seu-dominio/` (sem o container no fim; o Worker já o acrescenta).
 
 O Worker faz cache no próprio Cloudflare e respeita o `Cache-Control` de cada arquivo. Ele roda em **toda** requisição, mesmo nas que vêm do cache. O plano gratuito permite 100 mil requisições por dia, o que basta fora de eleição. Em dia de apuração, com milhares de pessoas atualizando a cada 15 s, esse limite acaba em poucas horas, então use o plano pago do Workers ou o caminho 2.
 
