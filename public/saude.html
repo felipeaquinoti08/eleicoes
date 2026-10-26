@@ -149,7 +149,9 @@ async function atualizar() {
     <div class="cartao"><h3>📦 Dados publicados</h3>
       <dl><dt>2º turno</dt><dd>${ha(snap.turno2)}</dd><dt>1º turno</dt><dd>${ha(snap.turno1)}</dd><dt>Histórico</dt><dd>${ha(s.historico)}</dd></dl></div>
     <div class="cartao"><h3>🖥️ Servidor</h3>
-      <dl><dt>Versão</dt><dd>${esc(s.versao)}</dd><dt>No ar desde</dt><dd>${ha(s.iniciadoEm)}</dd></dl></div>
+      <dl><dt>Versão</dt><dd>${esc(s.versao)}</dd><dt>No ar desde</dt><dd>${ha(s.iniciadoEm)}</dd>
+        <dt>Eleição</dt><dd>${esc(s.eleicao?.id || '–')} · ${s.eleicao?.tipo === 'municipal' ? 'municipal (prefeitos)' : 'geral'}${s.eleicao?.forcado ? ' · forçada' : ''}</dd>
+        <dt>Config. do TSE</dt><dd>${s.eleicao?.erro ? `<span class="erro-txt">${esc(s.eleicao.erro)}</span>` : ha(s.eleicao?.verificadoEm)}</dd></dl></div>
     ${cartaoHistorico(s.historicoStatus)}
     ${cartaoArmazenamento(s.armazenamento)}`;
 

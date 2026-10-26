@@ -208,6 +208,23 @@ async function exportarMunicipiosDoAoVivo() {
     }
     if (n) exportados += n;
   }
+  // eleição municipal: prefeitos de todos os municípios, a partir da coleta de server/municipal.js
+  for (const t of ['1', '2']) {
+    const id = `${ano}-${t}t-municipal`;
+    if (fs.existsSync(path.join(BASE_DIR, 'mun', id))) continue; // já embutido
+    const doc = await armazenamento.lerJSONAsync(`${P}${id}.json`);
+    const est = armazenamento.lerJSON(`cache-prefeitos-${t}.json`);
+    if (!doc?.completo || !est) continue;
+    for (const [uf, muns] of Object.entries(est)) {
+      if (!Object.keys(muns).length || Object.values(muns).some(m => m.secTot && m.secRec < m.secTot)) continue;
+      const mun = {};
+      for (const [cd, m] of Object.entries(muns)) {
+        mun[cd] = { r: m.cands.map(c => [c.n, c.nome, c.partido, c.votos, c.st]), c: m.comp, a: m.aptos, b: m.brancos, nu: m.nulos, s: m.secTot };
+      }
+      armazenamento.gravarJSON(`${P}mun/${id}/11-${uf}.json`, { cargo: 11, uf, mun, fonte: 'coleta ao vivo do painel' });
+      exportados++;
+    }
+  }
   return exportados;
 }
 

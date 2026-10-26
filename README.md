@@ -240,6 +240,8 @@ Se o Alpine der problema em alguma placa ARM: `docker compose build --build-arg 
 | `GOVERNADOR` | `1` | `0` desliga a coleta do 2º turno para governador |
 | `SUPLEMENTARES` | `1` | `0` desliga a coleta das eleições suplementares do dia |
 | `SUPLEMENTARES_DIAS` | `7` | Por quantos dias as suplementares continuam no painel |
+| `ELEICAO_CICLO` | | Força um ciclo (ex.: `ele2024`). Vazio = descoberto sozinho na configuração do TSE |
+| `ELEICAO_ANTECEDENCIA_DIAS` | `3` | Quantos dias antes do 1º turno o ciclo novo passa a ser o acompanhado |
 | `CACHE_DADOS_S` | `15` | `max-age`/`s-maxage` dos snapshots da apuração |
 | `CONCORRENCIA` | `4` | Downloads simultâneos ao TSE. Se o `/saude` mostrar muitos 429, baixe para 2 |
 | `HISTORICO` | `1` | `0` desliga o download do histórico |
@@ -560,13 +562,33 @@ No 2º turno, o placar mostra uma **projeção do resultado final** para o Total
 
 ## Próximas eleições
 
-| Parte | Automática? |
+**Nada precisa ser atualizado a cada eleição.** O servidor confere a configuração pública do TSE (`comum/config/ele-c.json`) ao subir e a cada 6 horas. Quando aparece um ciclo novo (`ele2028`, `ele2030`…), ele passa a ser o acompanhado **3 dias antes do 1º turno**, com os códigos de cada turno lidos de lá. Entre uma eleição e outra, o painel continua mostrando o resultado da última.
+
+```mermaid
+flowchart LR
+  CFG[("Configuração do TSE<br/>ele-c.json")] -->|"a cada 6 h"| EA["Servidor<br/>eleição atual"]
+  EA -->|"geral (2030, 2034…)"| G["Painel de presidente<br/>Brasil + exterior + governador"]
+  EA -->|"municipal (2028, 2032…)"| M["Painel de prefeitos<br/>todos os municípios"]
+  G & M -->|"quando termina"| H["Histórico<br/>com detalhamento municipal"]
+```
+
+| Parte | O que acontece sozinho |
 |---|---|
-| **Histórico** | ✅ Sim. Eleições novas (2028, 2030…) são descobertas na configuração do TSE e entram sozinhas quando a apuração termina |
-| **Suplementares do dia** | ✅ Sim. São lidas da configuração do TSE, em qualquer ano |
-| **Ao vivo ou resultados** | ✅ Sim. O modo é decidido pela data e pelo andamento da apuração |
-| **Painel ao vivo de uma eleição geral** (2030) | ⚠️ Precisa de ajuste. Os códigos da eleição (ciclo `ele2026`, eleições 6257/6258/6260, pleitos 3220/3221) estão fixos em `public/app.js`, `server/sync.js`, `server/governador.js` e `public/outros-cargos.js` |
-| **Painel ao vivo de uma eleição municipal** (2028) | ❌ Precisa de um modo novo. O painel ao vivo foi feito para presidente (Brasil + exterior); numa municipal não há presidente nem voto no exterior, e a disputa é por prefeito em cada município |
+| **Eleição geral** (2030…) | Presidente no Brasil e no exterior, governador no 2º turno nos estados que tiverem, e senador e deputados nos cards do estado, com os códigos do ciclo novo |
+| **Eleição municipal** (2028…) | A página inicial vira o **painel de prefeitos**: mapa do Brasil → estado → município na cor de quem lidera, prefeituras por partido (eleitos + liderando, somando os dois turnos), capitais, municípios que vão ao 2º turno, busca de município e card com fotos. Também funciona nos modos TV e live, com tour pelas capitais |
+| **Troca de ciclo** | O servidor reinicia sozinho (o Docker o sobe de novo) e começa a coleta do zero. O estado da eleição anterior não é misturado, e as páginas abertas recarregam pela `/versao` |
+| **Histórico** | Quando a apuração termina, a eleição entra no histórico com o detalhamento por município gerado da coleta ao vivo (presidente, governador e prefeitos) |
+| **Suplementares** | Lidas da configuração do TSE, em qualquer ano |
+| **Ao vivo ou resultados** | Decidido pela data e pelo andamento da apuração |
+
+<img src="docs/img/municipal.png" alt="Painel de prefeitos (testado com a eleição municipal de 2024): prefeituras por partido, mapa de São Paulo por município e lista de municípios" width="900">
+
+O `/saude` mostra a eleição acompanhada e quando a configuração do TSE foi conferida.
+
+O modo municipal foi testado com a eleição real de 2024, que o TSE ainda publica (São Paulo: Ricardo Nunes eleito com 59,4%; Aracaju: Emília Corrêa eleita com 57,46%). Para ver de novo, com a coleta limitada a alguns estados: `ELEICAO_CICLO=ele2024 MUNICIPAL_UFS=AC,SE,SP`.
+
+> [!NOTE]
+> Se o TSE mudar o formato da configuração ou dos arquivos de resultado numa eleição futura, será preciso ajustar o código. Até 2026 o formato é o mesmo desde 2024.
 
 ## Solução de problemas
 
@@ -622,6 +644,7 @@ public/                     site estático
   index.html, app.js        painel ao vivo
   governador.js             2º turno para governador
   outros-cargos.js          cards dos outros cargos do estado
+  municipal.html, .js, .css painel de prefeitos (eleição municipal)
   historico.html, .js       histórico com detalhamento municipal
   saude.html                página /saude
   bu.js, som.js             decodificador de boletim de urna e bipe
@@ -629,6 +652,8 @@ public/                     site estático
 server/
   server.js                 servidor HTTP (site, /saude, /presenca, /versao)
   sync.js                   coleta do TSE (Brasil, exterior, municípios)
+  eleicao-atual.js          descobre a eleição atual na configuração do TSE
+  municipal.js              coleta de prefeitos (eleição municipal)
   governador.js, suplementares.js, projecao.js
   historico.js              histórico (descobre e baixa eleições novas)
   historico-base/           eleições e municípios embutidos na imagem

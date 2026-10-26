@@ -12,6 +12,8 @@ services:
       TURNOS_MUN: "2,1"         # turnos com resultado por município
       CACHE_DADOS_S: "15"       # cache dos snapshots no Cloudflare/navegador (segundos)
       CONCORRENCIA: "4"         # downloads simultâneos ao TSE (menos = menos risco de bloqueio 429)
+      # A eleição acompanhada é descoberta sozinha na configuração do TSE (2028, 2030...). Só para testes:
+      ELEICAO_CICLO: ${ELEICAO_CICLO:-}   # ex.: ele2024 força um ciclo
       # Azure Blob (opcional): os valores vêm do .env, que nunca vai para o Git. Vazios = pasta local (volume abaixo).
       AZURE_STORAGE_ACCOUNT: ${AZURE_STORAGE_ACCOUNT:-}
       AZURE_CONTAINER_PUBLICO: ${AZURE_CONTAINER_PUBLICO:-eleicoes}

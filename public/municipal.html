@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Apuração de Eleições · Prefeitos</title>
+  <link rel="stylesheet" href="lib/leaflet.css">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="municipal.css">
+</head>
+<body class="municipal">
+<div id="mapp">
+  <header id="topo">
+    <div class="titulo">
+      <div class="linha1"><span class="ao-vivo" id="seloAoVivo"><i></i>AO VIVO</span><h1>APURAÇÃO DE ELEIÇÕES</h1></div>
+      <div class="sub" id="subtitulo">Prefeitos</div>
+    </div>
+    <div class="progresso">
+      <div class="progresso-txt"><span id="pctSecoes">–</span> <small>seções apuradas</small></div>
+      <div class="barra"><div id="barraSecoes"></div></div>
+      <small id="ultimaAtual">carregando…</small>
+    </div>
+    <div class="acoes">
+      <div id="turnosMun" class="turnos-mun"></div>
+      <span id="online" class="online oculto" title="Pessoas com o painel aberto agora"></span>
+      <a class="link-hist" href="historico.html" title="Eleições anteriores">📜 Histórico</a>
+      <button id="btnSom" class="acao" title="Som">🔊</button>
+    </div>
+  </header>
+
+  <nav id="trilhaMun"></nav>
+
+  <aside id="partidosMun">
+    <div id="numerosMun" class="numeros-mun"></div>
+    <h2>Prefeituras por partido <small id="partidosSub"></small></h2>
+    <ol id="listaPartidos"></ol>
+  </aside>
+
+  <main id="mapaMunWrap">
+    <div id="mapaMun"></div>
+    <div id="legendaMun"></div>
+    <div class="busca-mun"><input id="buscaMun" list="listaMunicipios" placeholder="🔎 Buscar município…" autocomplete="off"><datalist id="listaMunicipios"></datalist></div>
+  </main>
+
+  <aside id="ladoMun"></aside>
+
+  <footer id="ticker"><div id="tickerTrilho"></div></footer>
+</div>
+
+<div id="novosDados"><div class="nd-titulo">🗳️ NOVOS DADOS</div><div id="ndLista"></div></div>
+
+<script src="lib/leaflet.js"></script>
+<script src="carregar-geo.js"></script>
+<script src="municipios.js"></script>
+<script src="som.js"></script>
+<script src="municipal.js"></script>
+</body>
+</html>

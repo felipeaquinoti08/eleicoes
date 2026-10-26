@@ -1,0 +1,91 @@
+/* Painel municipal (prefeitos): reaproveita o cabeçalho, o ticker e os avisos de style.css */
+#mapp {
+  height: 100vh; display: grid; gap: 10px; padding: 10px;
+  grid-template-columns: 340px 1fr 400px;
+  grid-template-rows: auto auto 1fr auto;
+  grid-template-areas: "topo topo topo" "trilha trilha trilha" "partidos mapa lado" "ticker ticker ticker";
+  background: radial-gradient(1200px 600px at 20% -10%, #1b2a55 0%, var(--fundo) 60%);
+}
+#trilhaMun { grid-area: trilha; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+#trilhaMun button { background: var(--painel2); border: 1px solid var(--borda); border-radius: 999px; padding: 4px 12px; font-size: 14px; }
+#trilhaMun button.atual { background: var(--destaque); color: #111; font-weight: 800; border-color: var(--destaque); }
+#trilhaMun .sep { color: var(--suave); }
+#partidosMun, #ladoMun { background: var(--painel); border: 1px solid var(--borda); border-radius: 14px; padding: 12px; overflow: auto; min-height: 0; }
+#partidosMun { grid-area: partidos; }
+#ladoMun { grid-area: lado; }
+#mapaMunWrap { grid-area: mapa; position: relative; border-radius: 14px; overflow: hidden; border: 1px solid var(--borda); min-height: 0; }
+#mapaMun { position: absolute; inset: 0; background: #070b16; }
+#legendaMun { position: absolute; right: 10px; bottom: 22px; z-index: 500; background: #0b1020e6; border: 1px solid var(--borda); border-radius: 10px; padding: 8px 10px; font-size: 12px; max-height: 45%; overflow: auto; }
+#legendaMun div { display: flex; align-items: center; gap: 6px; }
+#legendaMun i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.busca-mun { position: absolute; left: 10px; top: 10px; z-index: 500; }
+.busca-mun input { width: 260px; background: #0b1020ee; color: var(--texto); border: 1px solid var(--borda); border-radius: 999px; padding: 7px 14px; font: inherit; font-size: 14px; }
+.turnos-mun { display: flex; gap: 4px; }
+.turnos-mun button { background: var(--painel2); border: 1px solid var(--borda); border-radius: 8px; padding: 4px 10px; font-size: 13px; }
+.turnos-mun button.ativa { background: var(--destaque); color: #111; font-weight: 800; border-color: var(--destaque); }
+
+/* números do topo da coluna da esquerda */
+.numeros-mun { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px; }
+.numeros-mun .n { background: var(--painel2); border: 1px solid var(--borda); border-radius: 10px; padding: 7px 9px; }
+.numeros-mun .n span { display: block; color: var(--suave); font-size: 12px; }
+.numeros-mun .n b { font-size: 19px; font-variant-numeric: tabular-nums; }
+.numeros-mun .n small { color: var(--suave); }
+#partidosMun h2, #ladoMun h2 { font-size: 16px; margin: 4px 0 8px; }
+#partidosMun h2 small, #ladoMun h2 small { color: var(--suave); font-weight: 400; font-size: 12px; }
+
+/* ranking de partidos: barra cheia = eleitos, clara = liderando */
+#listaPartidos { list-style: none; margin: 0; padding: 0; }
+#listaPartidos li.vazio-mun { display: block; }
+#listaPartidos li { display: grid; grid-template-columns: 88px 1fr 64px; gap: 8px; align-items: center; padding: 4px 0; font-size: 14px; }
+#listaPartidos .sg { font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#listaPartidos .trilho { height: 12px; background: #ffffff10; border-radius: 6px; overflow: hidden; display: flex; }
+#listaPartidos .trilho i { display: block; height: 100%; }
+#listaPartidos .num { text-align: right; font-variant-numeric: tabular-nums; }
+#listaPartidos .num small { color: var(--suave); display: block; font-size: 11px; }
+
+/* lista de municípios / capitais */
+.lista-mun { list-style: none; margin: 0; padding: 0; }
+.lista-mun li { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; padding: 7px 6px; border-bottom: 1px solid var(--borda); cursor: pointer; border-radius: 6px; }
+.lista-mun li:hover { background: var(--painel2); }
+.lista-mun .nm { font-weight: 700; }
+.lista-mun .nm small { color: var(--suave); font-weight: 400; }
+.lista-mun .ld { font-size: 13px; }
+.lista-mun .pc { text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; }
+.lista-mun .ap { text-align: right; color: var(--suave); font-size: 12px; }
+.filtro-lista { width: 100%; margin: 4px 0 8px; background: var(--painel2); color: var(--texto); border: 1px solid var(--borda); border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 14px; }
+
+/* card do município */
+.mun-cab h2 { font-size: 22px !important; margin: 0 0 2px !important; }
+.mun-cab .info { color: var(--suave); font-size: 13px; margin-bottom: 10px; }
+.cand-mun { display: grid; grid-template-columns: 54px 1fr auto; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--borda); }
+.cand-mun .foto { width: 54px; height: 54px; border-radius: 50%; object-fit: cover; border: 3px solid var(--cor); background: var(--painel2); display: grid; place-items: center; font-weight: 800; font-size: 18px; color: var(--cor); }
+.cand-mun .nome { font-weight: 800; }
+.cand-mun .nome small { color: var(--suave); font-weight: 400; }
+.cand-mun .trilho { height: 8px; background: #ffffff10; border-radius: 4px; margin-top: 5px; overflow: hidden; }
+.cand-mun .trilho i { display: block; height: 100%; background: var(--cor); }
+.cand-mun .pc { text-align: right; font-size: 20px; font-weight: 900; color: var(--cor); font-variant-numeric: tabular-nums; }
+.cand-mun .pc small { display: block; font-size: 12px; color: var(--suave); font-weight: 400; }
+.selo-mun { font-size: 11px; font-weight: 800; padding: 1px 6px; border-radius: 4px; margin-left: 6px; vertical-align: 2px; }
+.selo-mun.eleito { background: #16a34a; color: #fff; }
+.selo-mun.t2 { background: var(--destaque); color: #111; }
+.estat-mun { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
+.estat-mun div { background: var(--painel2); border: 1px solid var(--borda); border-radius: 8px; padding: 6px 8px; font-size: 12px; color: var(--suave); }
+.estat-mun b { display: block; color: var(--texto); font-size: 15px; }
+.voltar-mun { background: var(--painel2); border: 1px solid var(--borda); border-radius: 8px; padding: 4px 10px; font-size: 13px; margin-bottom: 8px; }
+.vazio-mun { color: var(--suave); padding: 20px 4px; text-align: center; }
+.ticker-mun { margin: 0 22px; }
+.ticker-mun b { margin-right: 4px; }
+
+/* celular e modo live: tudo empilhado, com rolagem */
+@media (max-width: 1100px) {
+  html, body { overflow: auto; height: auto; }
+  #mapp { height: auto; grid-template-columns: 1fr; grid-template-rows: auto; grid-template-areas: "topo" "trilha" "mapa" "lado" "partidos" "ticker"; }
+  #mapaMunWrap { height: 62vh; }
+  #partidosMun, #ladoMun { overflow: visible; }
+}
+body.vertical #mapp { height: 100vh; grid-template-columns: 1fr; grid-template-rows: auto auto 46% 1fr auto; grid-template-areas: "topo" "trilha" "mapa" "lado" "ticker"; }
+body.vertical #partidosMun, body.vertical .busca-mun { display: none; }
+body.vertical #mapaMunWrap { height: auto; }
+body.tv { font-size: 18px; }
+@media (min-width: 2200px) { body.tv #mapp { grid-template-columns: 460px 1fr 540px; } }
+body.vertical #legendaMun { max-height: 26%; font-size: 11px; }
