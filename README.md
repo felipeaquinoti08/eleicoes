@@ -235,6 +235,8 @@ Se o Alpine der problema em alguma placa ARM: `docker compose build --build-arg 
 |---|---|---|
 | `SYNC_BRASIL_S` | `30` | Intervalo, em segundos, para conferir se o TSE publicou dados novos do Brasil e do governador. As UFs só são baixadas quando há novidade |
 | `SYNC_INTERVALO_MIN` | `5` | Intervalo da coleta dos boletins de urna do exterior |
+| `SYNC_FORA_ELEICAO_H` | `12` | Fora do período de eleição, cada coleta roda só a cada tantas horas (2 vezes ao dia), para não consultar o TSE à toa |
+| `SYNC_JANELA_ANTES_DIAS` / `SYNC_JANELA_DEPOIS_DIAS` | `1` / `3` | Período de eleição: da véspera de cada turno até 3 dias depois. Nele valem os intervalos acima |
 | `TURNOS` | `2,1` | Turnos sincronizados (o 1º turno, já encerrado, a cada 60 min) |
 | `TURNOS_MUN` | `2,1` | Turnos com resultado por município |
 | `GOVERNADOR` | `1` | `0` desliga a coleta do 2º turno para governador |
@@ -527,7 +529,7 @@ A página **📜 Histórico** é organizada **por eleição**, com abas de turno
   - clicar num município mostra o resultado completo dele, e o botão **←** volta ao estado;
   - em Prefeito, o filtro de local tem **Todos os municípios do estado**;
   - deputados e vereadores ficam por estado e capital, porque são centenas de candidatos por município.
-- **Eleições novas entram sozinhas.** A cada 6 horas o servidor confere a configuração do TSE. Uma eleição ordinária nova é baixada e entra no histórico quando a apuração termina, junto com o detalhamento municipal gerado da coleta ao vivo.
+- **Eleições novas entram sozinhas.** A cada 6 horas durante uma eleição (2 vezes ao dia fora dela) o servidor confere a configuração do TSE. Uma eleição ordinária nova é baixada e entra no histórico quando a apuração termina, junto com o detalhamento municipal gerado da coleta ao vivo.
 - **Já vem pronto na imagem.** `server/historico-base/` tem cerca de 3 MB de eleições e 17 MB de municípios. O histórico aparece assim que o container sobe, sem depender do TSE, e o navegador só baixa os municípios de um estado quando ele é aberto.
 - **Conferido com os resultados oficiais:**
   - 2022: Lula 50,90% no 2º turno;
@@ -562,11 +564,11 @@ No 2º turno, o placar mostra uma **projeção do resultado final** para o Total
 
 ## Próximas eleições
 
-**Nada precisa ser atualizado a cada eleição.** O servidor confere a configuração pública do TSE (`comum/config/ele-c.json`) ao subir e a cada 6 horas. Quando aparece um ciclo novo (`ele2028`, `ele2030`…), ele passa a ser o acompanhado **3 dias antes do 1º turno**, com os códigos de cada turno lidos de lá. Entre uma eleição e outra, o painel continua mostrando o resultado da última.
+**Nada precisa ser atualizado a cada eleição.** O servidor confere a configuração pública do TSE (`comum/config/ele-c.json`) ao subir e 2 vezes ao dia. Quando aparece um ciclo novo (`ele2028`, `ele2030`…), ele passa a ser o acompanhado **3 dias antes do 1º turno**, com os códigos de cada turno lidos de lá. Entre uma eleição e outra, o painel continua mostrando o resultado da última.
 
 ```mermaid
 flowchart LR
-  CFG[("Configuração do TSE<br/>ele-c.json")] -->|"a cada 6 h"| EA["Servidor<br/>eleição atual"]
+  CFG[("Configuração do TSE<br/>ele-c.json")] -->|"2 vezes ao dia"| EA["Servidor<br/>eleição atual"]
   EA -->|"geral (2030, 2034…)"| G["Painel de presidente<br/>Brasil + exterior + governador"]
   EA -->|"municipal (2028, 2032…)"| M["Painel de prefeitos<br/>todos os municípios"]
   G & M -->|"quando termina"| H["Histórico<br/>com detalhamento municipal"]
@@ -580,10 +582,11 @@ flowchart LR
 | **Histórico** | Quando a apuração termina, a eleição entra no histórico com o detalhamento por município gerado da coleta ao vivo (presidente, governador e prefeitos) |
 | **Suplementares** | Lidas da configuração do TSE, em qualquer ano |
 | **Ao vivo ou resultados** | Decidido pela data e pelo andamento da apuração |
+| **Ritmo das consultas ao TSE** | Da véspera de cada turno até 3 dias depois, a coleta roda no ritmo de eleição (30 s, 5 min). Fora disso, cada coleta roda só 2 vezes ao dia. Uma suplementar entra no ritmo de eleição da véspera ao dia seguinte |
 
 <img src="docs/img/municipal.png" alt="Painel de prefeitos (testado com a eleição municipal de 2024): prefeituras por partido, mapa de São Paulo por município e lista de municípios" width="900">
 
-O `/saude` mostra a eleição acompanhada e quando a configuração do TSE foi conferida.
+O `/saude` mostra a eleição acompanhada, o ritmo da coleta (eleição ativa ou fora de eleição) e quando a configuração do TSE foi conferida.
 
 O modo municipal foi testado com a eleição real de 2024, que o TSE ainda publica (São Paulo: Ricardo Nunes eleito com 59,4%; Aracaju: Emília Corrêa eleita com 57,46%). Para ver de novo, com a coleta limitada a alguns estados: `ELEICAO_CICLO=ele2024 MUNICIPAL_UFS=AC,SE,SP`.
 

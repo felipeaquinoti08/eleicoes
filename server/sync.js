@@ -7,6 +7,7 @@ const BU = require('../public/bu.js');
 const projecao = require('./projecao');
 const armazenamento = require('./armazenamento');
 const eleicao = require('./eleicao-atual');
+const ritmo = require('./ritmo');
 
 // Códigos da eleição atual (ciclo, eleição e pleito de cada turno), descobertos na configuração do TSE por
 // server/eleicao-atual.js e fixados quando a coleta começa. Uma eleição nova reinicia o processo.
@@ -393,38 +394,39 @@ async function loopMunicipios(n, pausaMin) {
       marcar(n, "municipios", { ok: false, ultimaFalha: new Date().toISOString(), erro: e.message });
       log(`erro municípios turno ${n}:`, e.message);
     }
-    marcar(n, "municipios", { rodando: false, proxima: new Date(Date.now() + pausaMin * 60 * 1000).toISOString() });
-    await espera(pausaMin * 60 * 1000);
+    marcar(n, "municipios", { rodando: false, intervaloMin: ritmo.intervalo(pausaMin), proxima: new Date(Date.now() + ritmo.intervalo(pausaMin) * 60 * 1000).toISOString() });
+    await ritmo.esperarProxima(Date.now(), pausaMin);
   }
 }
 
 // estado de cada coleta, exposto em /saude
 const STATUS = {};
 function marcar(n, nome, dados) { const t = (STATUS["turno" + n] ||= {}); t[nome] = { ...(t[nome] || {}), ...dados }; }
-function status() { return { ...STATUS, freioTSE: statusFreio() }; }
+function status() { return { ...STATUS, freioTSE: statusFreio(), ritmo: ritmo.status() }; }
 
-function agendar(n, minutos, fn, nome) {
-  let rodando = false, retentativa = null;
-  const rodar = async () => {
-    if (rodando) return;
-    rodando = true;
-    clearTimeout(retentativa);
-    const inicio = Date.now();
-    marcar(n, nome, { rodando: true, intervaloMin: minutos });
-    try {
-      const r = await fn(n);
-      if (String(n) === '2' && fn === sincronizarExterior) atualizarProjecao();
-      marcar(n, nome, { ok: true, ultimoSucesso: new Date().toISOString(), duracaoS: +((Date.now() - inicio) / 1000).toFixed(1), erro: null, ...r });
+// roda fn já na subida e depois a cada `minutos` enquanto a eleição está ativa; fora dela, só 2 vezes ao dia (ritmo.js)
+function agendar(n, minutos, fn, nome, ativa = ritmo.eleicaoAtiva) {
+  (async () => {
+    for (;;) {
+      const inicio = Date.now();
+      marcar(n, nome, { rodando: true, intervaloMin: ritmo.intervalo(minutos, ativa) });
+      let falhou = false;
+      try {
+        const r = await fn(n);
+        if (String(n) === '2' && fn === sincronizarExterior) atualizarProjecao();
+        marcar(n, nome, { ok: true, ultimoSucesso: new Date().toISOString(), duracaoS: +((Date.now() - inicio) / 1000).toFixed(1), erro: null, ...r });
+      } catch (e) {
+        falhou = true;
+        marcar(n, nome, { ok: false, ultimaFalha: new Date().toISOString(), erro: e.message });
+      }
+      // falha: nova tentativa em 1 min durante a eleição, em 60 min fora dela
+      const proxMin = falhou ? Math.min(ritmo.intervalo(minutos, ativa), ativa() ? 1 : 60) : ritmo.intervalo(minutos, ativa);
+      if (falhou) log(`erro ${nome} turno ${n}: ${STATUS['turno' + n][nome].erro} (nova tentativa em ${proxMin} min)`);
+      marcar(n, nome, { rodando: false, proxima: new Date(Date.now() + proxMin * 60 * 1000).toISOString() });
+      if (falhou) await espera(proxMin * 60 * 1000);
+      else await ritmo.esperarProxima(Date.now(), minutos, ativa);
     }
-    catch (e) {
-      marcar(n, nome, { ok: false, ultimaFalha: new Date().toISOString(), erro: e.message });
-      log(`erro ${nome} turno ${n}: ${e.message} (nova tentativa em 1 min)`);
-      retentativa = setTimeout(rodar, 60 * 1000);
-    }
-    finally { rodando = false; marcar(n, nome, { rodando: false, proxima: new Date(Date.now() + minutos * 60 * 1000).toISOString() }); }
-  };
-  rodar();
-  return setInterval(rodar, minutos * 60 * 1000);
+  })();
 }
 
 function iniciar() {
@@ -433,7 +435,7 @@ function iniciar() {
   // eleições suplementares do dia (prefeitos etc.), lidas da configuração do TSE, em qualquer ano
   if (process.env.SUPLEMENTARES !== '0') {
     const sup = require('./suplementares').criar({ getJSON, baixar, gravarJSON, log, armazenamento });
-    agendar('2', brasilMin0, () => sup.sincronizar(), 'suplementares');
+    agendar('2', brasilMin0, () => sup.sincronizar(), 'suplementares', () => ritmo.eleicaoAtiva() || sup.ativa());
   }
   if (ELEICAO.tipo !== 'geral') return iniciarOutroTipo(brasilMin0);
   const min = +process.env.SYNC_INTERVALO_MIN || 5;
@@ -452,7 +454,7 @@ function iniciar() {
     const gov = require('./governador').criar({ getJSON, baixar, emParalelo, gravarJSON, log, armazenamento, lerEstado, CONCORRENCIA, eleicao: ELEICAO });
     agendar('2', brasilMin, () => gov.sincronizar(), 'governador');
   }
-  log(`sincronização ativa: turnos ${turnos.join(', ')}; Brasil a cada ${brasilMin * 60} s, exterior a cada ${min} min (1º turno a cada ${Math.max(min, 60)} min)`);
+  log(`sincronização ativa: turnos ${turnos.join(', ')}; Brasil a cada ${brasilMin * 60} s, exterior a cada ${min} min (1º turno a cada ${Math.max(min, 60)} min)${ritmo.eleicaoAtiva() ? '' : ` (fora de eleição: cada coleta só a cada ${ritmo.status().foraDeEleicaoH} h, até a véspera da votação)`}`);
 }
 
 // eleição municipal: a coleta de prefeitos fica em server/municipal.js
@@ -461,7 +463,7 @@ function iniciarOutroTipo(brasilMin) {
   try { mod = require('./municipal'); } catch { log(`eleição ${ELEICAO.id} (${ELEICAO.tipo}): coleta ao vivo ainda não disponível para este tipo`); return; }
   const mun = mod.criar({ getJSON, getLote, baixar, emParalelo, gravarJSON, log, armazenamento, lerEstado, CONCORRENCIA, eleicao: ELEICAO });
   for (const t of Object.keys(ELEICAO.turnos)) agendar(t, t === '1' && ELEICAO.turnos[2] && new Date() > new Date(ELEICAO.turnos[2].data) ? 60 : brasilMin, () => mun.sincronizar(t), 'prefeitos');
-  log(`sincronização ativa: eleição municipal ${ELEICAO.id}, turnos ${Object.keys(ELEICAO.turnos).join(', ')}`);
+  log(`sincronização ativa: eleição municipal ${ELEICAO.id}, turnos ${Object.keys(ELEICAO.turnos).join(', ')}${ritmo.eleicaoAtiva() ? '' : ` (fora de eleição: cada coleta só a cada ${ritmo.status().foraDeEleicaoH} h, até a véspera da votação)`}`);
 }
 
 const sincronizarTurno = async n => { await sincronizarNacional(n); await sincronizarExterior(n); };

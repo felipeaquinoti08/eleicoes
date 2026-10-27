@@ -10,7 +10,8 @@ function criar({ getJSON, baixar, gravarJSON, log, armazenamento }) {
   let lista = null, listaDia = '';
   const estado = {}; // chave -> { hora, ... }
 
-  // hoje no fuso de Brasília (aaaa-mm-dd); entram as suplementares dos últimos DIAS dias (as de hoje, ao vivo)
+  // hoje no fuso de Brasília (aaaa-mm-dd); entram as suplementares dos últimos DIAS dias (as de hoje, ao vivo) e as de
+  // amanhã, para a coleta já entrar no ritmo de eleição na véspera (fora de eleição ela roda só 2 vezes ao dia)
   const DIAS = +process.env.SUPLEMENTARES_DIAS || 7;
   const hojeISO = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
   const hojeBR = hojeISO;
@@ -23,7 +24,7 @@ function criar({ getJSON, baixar, gravarJSON, log, armazenamento }) {
     const out = [];
     for (const p of cfg.pl || []) {
       const dias = Math.round((Date.parse(hoje) - Date.parse(iso(p.dt))) / 86400000);
-      if (dias < 0 || dias > DIAS) continue;
+      if (dias < -1 || dias > DIAS) continue;
       for (const e of p.e || []) {
         if (e.tp !== '4' && e.tp !== '2') continue; // 4 = suplementar municipal, 2 = suplementar estadual
         for (const a of e.abr || []) for (const cp of a.cp || []) {
@@ -61,7 +62,8 @@ function criar({ getJSON, baixar, gravarJSON, log, armazenamento }) {
   }
 
   async function sincronizar() {
-    const sups = await descobrir();
+    const hoje = hojeBR();
+    const sups = (await descobrir()).filter(s => s.data <= hoje); // as de amanhã ainda não têm resultado
     if (!sups.length) {
       if (!armazenamento.existe('sup-hoje.json')) gravarJSON('sup-hoje.json', { gerado: new Date().toISOString(), eleicoes: [] });
       return { eleicoesHoje: 0, semNovidade: true };
@@ -95,7 +97,10 @@ function criar({ getJSON, baixar, gravarJSON, log, armazenamento }) {
     return { eleicoesHoje: sups.length, semNovidade: !mudou, falhas };
   }
 
-  return { sincronizar };
+  // há suplementar ontem, hoje ou amanhã: a coleta fica no ritmo de eleição
+  const ativa = () => !!lista && lista.some(s => Math.abs(Math.round((Date.parse(hojeBR()) - Date.parse(s.data)) / 86400000)) <= 1);
+
+  return { sincronizar, ativa };
 }
 
 module.exports = { criar };

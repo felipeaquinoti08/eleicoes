@@ -233,7 +233,7 @@ servidor.listen(PORTA, async () => {
   console.log(`eleição acompanhada: ${e.id} (${e.tipo}, ${e.origem}), turnos ${Object.entries(e.turnos).map(([t, v]) => `${t}º = ${v.ele} em ${v.data}`).join(', ')}`);
   if (process.env.SYNC !== '0') sync.iniciar();
   if (process.env.HISTORICO !== '0') historico.iniciarHistorico();
-  // A cada 6 h confere a configuração do TSE. Quando começa uma eleição nova, o processo reinicia (o Docker sobe de
+  // Duas vezes ao dia confere a configuração do TSE. Quando começa uma eleição nova, o processo reinicia (o Docker sobe de
   // novo sozinho) para a coleta começar limpa com os códigos novos; as páginas abertas recarregam pela /versao.
   setInterval(async () => {
     const { mudou } = await eleicao.atualizar();
@@ -241,6 +241,6 @@ servidor.listen(PORTA, async () => {
     console.log(`nova eleição na configuração do TSE: ${eleicao.obter().id}. Reiniciando para acompanhá-la.`);
     await armazenamento.aguardarEnvios(60000);
     process.exit(0);
-  }, 6 * 60 * 60 * 1000).unref();
+  }, 12 * 60 * 60 * 1000).unref();
 });
 for (const s of ['SIGINT', 'SIGTERM']) process.on(s, () => servidor.close(() => process.exit(0)));

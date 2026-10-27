@@ -151,6 +151,7 @@ async function atualizar() {
     <div class="cartao"><h3>🖥️ Servidor</h3>
       <dl><dt>Versão</dt><dd>${esc(s.versao)}</dd><dt>No ar desde</dt><dd>${ha(s.iniciadoEm)}</dd>
         <dt>Eleição</dt><dd>${esc(s.eleicao?.id || '–')} · ${s.eleicao?.tipo === 'municipal' ? 'municipal (prefeitos)' : 'geral'}${s.eleicao?.forcado ? ' · forçada' : ''}</dd>
+        <dt>Ritmo da coleta</dt><dd>${s.coletas?.ritmo ? (s.coletas.ritmo.eleicaoAtiva ? 'eleição ativa (ritmo normal)' : `fora de eleição (a cada ${s.coletas.ritmo.foraDeEleicaoH} h)`) : '–'}</dd>
         <dt>Config. do TSE</dt><dd>${s.eleicao?.erro ? `<span class="erro-txt">${esc(s.eleicao.erro)}</span>` : ha(s.eleicao?.verificadoEm)}</dd></dl></div>
     ${cartaoHistorico(s.historicoStatus)}
     ${cartaoArmazenamento(s.armazenamento)}`;

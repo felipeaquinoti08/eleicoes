@@ -365,16 +365,17 @@ function iniciarHistorico() {
   // o índice sai na hora com a base embutida e o que já foi baixado; os downloads vêm depois
   try { const n = publicarBase(); if (n) log(`base embutida enviada ao Azure Blob: ${n} arquivos`); } catch (e) { log('erro ao enviar a base:', e.message); }
   montarIndice().then(l => log(`índice inicial com ${l.length} eleições`)).catch(e => log('erro no índice inicial:', e.message));
-  const INTERVALO = 6 * 60 * 60 * 1000;
+  // a cada 6 h durante uma eleição; fora dela, 2 vezes ao dia (ritmo.js)
+  const ritmo = require('./ritmo');
   const rodar = async () => {
     try { await sincronizarHistorico(); statusHistorico.erro = null; }
     catch (e) { statusHistorico.erro = e.message; log('erro:', e.message); }
     statusHistorico.ultimaPassada = new Date().toISOString();
-    statusHistorico.proxima = new Date(Date.now() + INTERVALO).toISOString();
+    statusHistorico.proxima = new Date(Date.now() + ritmo.intervalo(6 * 60) * 60 * 1000).toISOString();
   };
   statusHistorico.proxima = new Date(Date.now() + 60 * 1000).toISOString();
-  setTimeout(rodar, 60 * 1000); // começa depois que a apuração ao vivo já fez a primeira passada
-  setInterval(rodar, INTERVALO); // confere eleições novas e completa o que faltou a cada 6 h
+  // começa depois que a apuração ao vivo já fez a primeira passada; depois confere eleições novas e completa o que faltou
+  (async () => { await espera(60 * 1000); for (;;) { await rodar(); await ritmo.esperarProxima(Date.now(), 6 * 60); } })();
 }
 
 module.exports = { iniciarHistorico, sincronizarHistorico, status, exportarMunicipiosDoAoVivo, montarIndice };
